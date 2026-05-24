@@ -7,18 +7,113 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
-model User {
-  id        String   @id @default(cuid())
-  name      String
-  email     String   @unique
-  password  String
-  role      Role     @default(USER)
-
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+enum AdminRole {
+  SUPER_ADMIN
+  ADMINISTRATOR
 }
 
-enum Role {
-  ADMIN
-  USER
+enum ReimbursementStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+enum ApprovalStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+model User {
+  id                String   @id @default(cuid())
+
+  name              String
+  email             String   @unique
+  password          String
+
+  resetToken        String?
+  resetTokenExpiry  DateTime?
+
+  reimbursements    Reimbursement[]
+
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+}
+
+model Position {
+  id                String   @id @default(cuid())
+
+  name              String   @unique
+  priority          Int
+
+  administrators    Administrator[]
+
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+}
+
+model Administrator {
+  id                String   @id @default(cuid())
+
+  name              String
+  email             String   @unique
+  password          String
+
+  role              AdminRole
+
+  resetToken        String?
+  resetTokenExpiry  DateTime?
+
+  positionId        String?
+  position          Position? @relation(fields: [positionId], references: [id])
+
+  approvals         ReimbursementApproval[]
+
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+}
+
+model Reimbursement {
+  id                String   @id @default(cuid())
+
+  committee         String
+  event             String
+
+  amount            Float
+  description       String?
+
+  receiptUrl        String
+
+  status            ReimbursementStatus @default(PENDING)
+
+  currentPriority   Int @default(1)
+
+  userId            String
+  user              User @relation(fields: [userId], references: [id])
+
+  approvals         ReimbursementApproval[]
+
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+}
+
+model ReimbursementApproval {
+  id                    String   @id @default(cuid())
+
+  reimbursementId       String
+  reimbursement         Reimbursement @relation(fields: [reimbursementId], references: [id])
+
+  administratorId       String
+  administrator         Administrator @relation(fields: [administratorId], references: [id])
+
+  priority              Int
+
+  status                ApprovalStatus @default(PENDING)
+
+  remark                String?
+
+  actedAt               DateTime?
+
+  createdAt             DateTime @default(now())
+  updatedAt             DateTime @updatedAt
 }
