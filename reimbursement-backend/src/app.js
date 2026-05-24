@@ -2,16 +2,25 @@ const express = require("express");
 const cors = require("cors");
 
 const adminRoutes = require("./routes/adminRoutes");
-const authRoutes = require("./routes/authRoutes");
-const userRoutes = require("./routes/userRoutes");
+const adminAuthRoutes = require("./routes/adminAuthRoutes");
+const userAuthRoutes = require("./routes/userAuthRoutes");
+
+const reimbursementRoutes = require("./routes/reimbursementRoutes");
+const approvalRoutes = require("./routes/approvalRoutes");
 
 const app = express();
 
 app.use(cors());
 app.use(express.json());
 
+// Admin Routes
+app.use("/api/admin/auth", adminAuthRoutes);
+app.use("/api/admin/reimbursements", approvalRoutes);
 app.use("/api/admin", adminRoutes);
-app.use("/api/auth", authRoutes);
-app.use("/api/user", userRoutes);
+
+// User (Treasurer) Routes
+app.use("/api/user/auth", userAuthRoutes);
+app.use("/api/user/reimbursements", reimbursementRoutes);
+
 
 module.exports = app;
