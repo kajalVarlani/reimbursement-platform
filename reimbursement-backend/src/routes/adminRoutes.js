@@ -11,6 +11,7 @@ const {
   listPositions,
   updatePosition,
   deletePosition,
+  listAllReimbursements,
 } = require("../controllers/adminController");
 
 const router = express.Router();
@@ -34,5 +35,8 @@ router.post("/positions", createPosition);
 router.get("/positions", listPositions);
 router.put("/positions/:id", updatePosition);
 router.delete("/positions/:id", deletePosition);
+
+// Global reimbursement overview (audit)
+router.get("/reimbursements", listAllReimbursements);
 
 module.exports = router;

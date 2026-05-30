@@ -279,6 +279,42 @@ async function deletePosition(req, res) {
   }
 }
 
+async function listAllReimbursements(req, res) {
+  try {
+    const { status } = req.query; // optional filter: ?status=PENDING|APPROVED|REJECTED|QUERY_RAISED
+
+    const where = status ? { status } : {};
+
+    const reimbursements = await prisma.reimbursement.findMany({
+      where,
+      include: {
+        user: {
+          select: { id: true, name: true, email: true },
+        },
+        approvals: {
+          include: {
+            administrator: {
+              select: {
+                id: true,
+                name: true,
+                email: true,
+                position: { select: { name: true, priority: true } },
+              },
+            },
+          },
+          orderBy: { priority: "asc" },
+        },
+      },
+      orderBy: { createdAt: "desc" },
+    });
+
+    res.status(200).json(reimbursements);
+  } catch (error) {
+    console.error("List all reimbursements error:", error);
+    res.status(500).json({ message: "Internal Server Error" });
+  }
+}
+
 module.exports = {
   createUser,
   listUsers,
@@ -290,4 +326,5 @@ module.exports = {
   listPositions,
   updatePosition,
   deletePosition,
+  listAllReimbursements,
 };
