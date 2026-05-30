@@ -163,8 +163,24 @@ async function resetPassword(req, res) {
   }
 }
 
+async function getMe(req, res) {
+  try {
+    res.status(200).json({
+      id: req.admin.id,
+      name: req.admin.name,
+      email: req.admin.email,
+      role: req.admin.role,
+      position: req.admin.position,
+    });
+  } catch (error) {
+    console.error("Admin getMe error:", error);
+    res.status(500).json({ message: "Internal Server Error" });
+  }
+}
+
 module.exports = {
   login,
   forgotPassword,
   resetPassword,
+  getMe,
 };
