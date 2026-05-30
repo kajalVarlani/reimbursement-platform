@@ -1,0 +1,198 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap');
+
+/* ═══════════════════════════════════════════
+   Winter Chill – Design System
+   Palette: #B8E3E9 · #93B1B5 · #4F7C82 · #0B3E33
+   ═══════════════════════════════════════════ */
+
+:root {
+  /* ── Primary Palette ── */
+  --wc-100: #B8E3E9;
+  --wc-200: #93B1B5;
+  --wc-300: #4F7C82;
+  --wc-400: #0B3E33;
+
+  /* ── Extended Shades ── */
+  --wc-50:  #daf2f5;
+  --wc-150: #a5cbd0;
+  --wc-250: #6e9aa0;
+  --wc-350: #2a5d52;
+  --wc-500: #062a22;
+
+  /* ── Semantic Tokens ── */
+  --bg-primary:    #f0f8fa;
+  --bg-secondary:  #ffffff;
+  --bg-card:       rgba(255, 255, 255, 0.72);
+  --bg-glass:      rgba(184, 227, 233, 0.18);
+
+  --text-primary:   #0B3E33;
+  --text-secondary: #4F7C82;
+  --text-muted:     #93B1B5;
+  --text-inverse:   #f0f8fa;
+
+  --border-light:   rgba(147, 177, 181, 0.3);
+  --border-default: rgba(79, 124, 130, 0.25);
+
+  --accent:         #4F7C82;
+  --accent-hover:   #3d666b;
+  --accent-glow:    rgba(79, 124, 130, 0.35);
+
+  --success:  #2a9d6e;
+  --error:    #dc4b4b;
+  --warning:  #e09c3a;
+
+  --shadow-sm:  0 1px 3px rgba(11, 62, 51, 0.06), 0 1px 2px rgba(11, 62, 51, 0.04);
+  --shadow-md:  0 4px 14px rgba(11, 62, 51, 0.08), 0 2px 6px rgba(11, 62, 51, 0.04);
+  --shadow-lg:  0 12px 40px rgba(11, 62, 51, 0.12), 0 4px 12px rgba(11, 62, 51, 0.06);
+  --shadow-xl:  0 20px 60px rgba(11, 62, 51, 0.15), 0 8px 20px rgba(11, 62, 51, 0.08);
+  --shadow-glow: 0 0 30px rgba(79, 124, 130, 0.2);
+
+  /* ── Typography ── */
+  --font-sans: 'Inter', system-ui, -apple-system, sans-serif;
+  --font-mono: 'JetBrains Mono', ui-monospace, Consolas, monospace;
+
+  /* ── Radii ── */
+  --radius-sm: 6px;
+  --radius-md: 10px;
+  --radius-lg: 16px;
+  --radius-xl: 24px;
+  --radius-full: 9999px;
+
+  /* ── Transitions ── */
+  --ease-smooth: cubic-bezier(0.25, 0.46, 0.45, 0.94);
+  --ease-bounce: cubic-bezier(0.68, -0.55, 0.265, 1.55);
+  --duration-fast: 150ms;
+  --duration-normal: 250ms;
+  --duration-slow: 400ms;
+}
+
+/* ── Reset & Base ── */
+*,
+*::before,
+*::after {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+html {
+  font-size: 16px;
+  scroll-behavior: smooth;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+body {
+  font-family: var(--font-sans);
+  color: var(--text-primary);
+  background: var(--bg-primary);
+  line-height: 1.6;
+  min-height: 100vh;
+  overflow-x: hidden;
+}
+
+#root {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+
+/* ── Global Typography ── */
+h1, h2, h3, h4, h5, h6 {
+  font-family: var(--font-sans);
+  font-weight: 700;
+  color: var(--text-primary);
+  line-height: 1.2;
+}
+
+a {
+  color: var(--accent);
+  text-decoration: none;
+  transition: color var(--duration-fast) var(--ease-smooth);
+}
+
+a:hover {
+  color: var(--accent-hover);
+}
+
+/* ── Animations ── */
+@keyframes fadeInUp {
+  from {
+    opacity: 0;
+    transform: translateY(24px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+
+@keyframes slideInLeft {
+  from {
+    opacity: 0;
+    transform: translateX(-30px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+@keyframes shimmer {
+  0%   { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
+}
+
+@keyframes float {
+  0%, 100% { transform: translateY(0); }
+  50%      { transform: translateY(-8px); }
+}
+
+@keyframes pulse-ring {
+  0%   { transform: scale(0.95); opacity: 0.7; }
+  50%  { transform: scale(1.05); opacity: 0.3; }
+  100% { transform: scale(0.95); opacity: 0.7; }
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+/* ── Utility Classes ── */
+.animate-fade-in-up {
+  animation: fadeInUp 0.6s var(--ease-smooth) forwards;
+}
+
+.animate-fade-in {
+  animation: fadeIn 0.4s var(--ease-smooth) forwards;
+}
+
+.animate-slide-in-left {
+  animation: slideInLeft 0.5s var(--ease-smooth) forwards;
+}
+
+/* ── Scrollbar ── */
+::-webkit-scrollbar {
+  width: 6px;
+}
+::-webkit-scrollbar-track {
+  background: var(--bg-primary);
+}
+::-webkit-scrollbar-thumb {
+  background: var(--wc-200);
+  border-radius: var(--radius-full);
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--wc-300);
+}
+
+/* ── Selection ── */
+::selection {
+  background: var(--wc-100);
+  color: var(--wc-400);
+}

@@ -50,6 +50,20 @@ async function main() {
   });
   console.log(`Seeded SUPER_ADMIN: ${superAdmin.email}`);
 
+  // Seed default User (Treasurer)
+  const userEmail = "user@reimbursement.com";
+  const userPassword = await bcrypt.hash("Password123", 10);
+  const user = await prisma.user.upsert({
+    where: { email: userEmail },
+    update: { password: userPassword },
+    create: {
+      name: "Test Treasurer",
+      email: userEmail,
+      password: userPassword,
+    },
+  });
+  console.log(`Seeded user: ${user.email}`);
+
   // 5. Seed target administrators with password "Password123"
   const defaultPassword = await bcrypt.hash("Password123", 10);
 
