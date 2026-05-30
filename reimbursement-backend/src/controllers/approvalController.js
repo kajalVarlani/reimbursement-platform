@@ -5,6 +5,35 @@ async function getVisibleReimbursements(req, res) {
   try {
     const admin = req.admin;
 
+    // Super Admin gets global audit access (all reimbursements)
+    if (admin.role === "SUPER_ADMIN") {
+      const { status } = req.query;
+      const where = status ? { status } : {};
+      const reimbursements = await prisma.reimbursement.findMany({
+        where,
+        include: {
+          user: {
+            select: { id: true, name: true, email: true },
+          },
+          approvals: {
+            include: {
+              administrator: {
+                select: {
+                  id: true,
+                  name: true,
+                  email: true,
+                  position: { select: { name: true, priority: true } },
+                },
+              },
+            },
+            orderBy: { priority: "asc" },
+          },
+        },
+        orderBy: { createdAt: "desc" },
+      });
+      return res.status(200).json(reimbursements);
+    }
+
     // Check if the administrator is assigned a position and priority
     if (!admin.position) {
       return res.status(403).json({
