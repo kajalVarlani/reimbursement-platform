@@ -16,12 +16,14 @@ enum ReimbursementStatus {
   PENDING
   APPROVED
   REJECTED
+  QUERY_RAISED
 }
 
 enum ApprovalStatus {
   PENDING
   APPROVED
   REJECTED
+  QUERY_RAISED
 }
 
 model User {
