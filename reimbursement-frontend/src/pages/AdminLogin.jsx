@@ -131,13 +131,13 @@ function AdminLogin() {
 
             <div className="form-footer">
               <div />
-              <button
-                type="button"
+              <Link
+                to="/admin/forgot-password"
                 className="forgot-password-link"
                 id="admin-forgot-password"
               >
                 Forgot password?
-              </button>
+              </Link>
             </div>
 
             <button

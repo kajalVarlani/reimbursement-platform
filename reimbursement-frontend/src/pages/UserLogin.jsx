@@ -131,13 +131,13 @@ function UserLogin() {
 
             <div className="form-footer">
               <div />
-              <button
-                type="button"
+              <Link
+                to="/forgot-password"
                 className="forgot-password-link"
                 id="user-forgot-password"
               >
                 Forgot password?
-              </button>
+              </Link>
             </div>
 
             <button
