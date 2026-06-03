@@ -7,6 +7,11 @@ export const getApprovalQueue = async () => {
   return response.data;
 };
 
+export const getApprovalHistory = async () => {
+  const response = await api.get('/admin/reimbursements/history');
+  return response.data;
+};
+
 export const approveReimbursement = async (id, remark = '') => {
   const response = await api.post(`/admin/reimbursements/${id}/approve`, { remark });
   return response.data;
@@ -14,6 +19,11 @@ export const approveReimbursement = async (id, remark = '') => {
 
 export const rejectReimbursement = async (id, remark = '') => {
   const response = await api.post(`/admin/reimbursements/${id}/reject`, { remark });
+  return response.data;
+};
+
+export const raiseQueryOnReimbursement = async (id, remark) => {
+  const response = await api.post(`/admin/reimbursements/${id}/query`, { remark });
   return response.data;
 };
 

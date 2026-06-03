@@ -6,6 +6,7 @@ import {
   getApprovalQueue,
   approveReimbursement,
   rejectReimbursement,
+  raiseQueryOnReimbursement,
 } from '../services/adminService';
 import {
   HiOutlineClock,
@@ -16,6 +17,7 @@ import {
   HiOutlineThumbUp,
   HiOutlineThumbDown,
   HiOutlineRefresh,
+  HiOutlineQuestionMarkCircle,
 } from 'react-icons/hi';
 import { TbFileInvoice, TbShieldCheck } from 'react-icons/tb';
 import toast, { Toaster } from 'react-hot-toast';
@@ -74,16 +76,23 @@ function ApprovalQueue() {
   const handleConfirmAction = async () => {
     const { action, claimId, remark } = confirmModal;
     setConfirmModal((prev) => ({ ...prev, processing: true }));
-    const toastId = toast.loading(
-      action === 'approve' ? 'Approving claim…' : 'Rejecting claim…'
-    );
+    const loadingMessage = 
+      action === 'approve' 
+        ? 'Approving claim…' 
+        : action === 'reject' 
+          ? 'Rejecting claim…' 
+          : 'Raising query…';
+    const toastId = toast.loading(loadingMessage);
     try {
       if (action === 'approve') {
         await approveReimbursement(claimId, remark);
         toast.success('Claim approved successfully!', { id: toastId });
-      } else {
+      } else if (action === 'reject') {
         await rejectReimbursement(claimId, remark);
         toast.success('Claim rejected.', { id: toastId });
+      } else if (action === 'query') {
+        await raiseQueryOnReimbursement(claimId, remark);
+        toast.success('Query raised successfully!', { id: toastId });
       }
       setConfirmModal({ open: false, action: null, claimId: null, remark: '', processing: false });
       setSelectedClaim(null);
@@ -107,6 +116,14 @@ function ApprovalQueue() {
           <span>Reimbursement Portal</span>
         </div>
         <div className="header-user-actions">
+          <button
+            className="btn-secondary"
+            style={{ padding: '8px 16px', fontSize: '13px' }}
+            onClick={() => navigate('/admin/history')}
+            id="btn-go-history"
+          >
+            View History
+          </button>
           {role === 'SUPER_ADMIN' && (
             <button
               className="btn-secondary"
@@ -267,6 +284,15 @@ function ApprovalQueue() {
                             Approve
                           </button>
                           <button
+                            className="btn-action-query"
+                            onClick={() => openConfirm('query', claim.id)}
+                            title="Raise Query"
+                            id={`btn-query-${claim.id}`}
+                          >
+                            <HiOutlineQuestionMarkCircle />
+                            Query
+                          </button>
+                          <button
                             className="btn-action-reject"
                             onClick={() => openConfirm('reject', claim.id)}
                             title="Reject"
@@ -300,6 +326,14 @@ function ApprovalQueue() {
                   id="modal-btn-approve"
                 >
                   <HiOutlineThumbUp /> Approve
+                </button>
+                <button
+                  className="btn-action-query"
+                  style={{ padding: '7px 14px' }}
+                  onClick={() => { setSelectedClaim(null); openConfirm('query', selectedClaim.id); }}
+                  id="modal-btn-query"
+                >
+                  <HiOutlineQuestionMarkCircle /> Query
                 </button>
                 <button
                   className="btn-action-reject"
@@ -424,7 +458,11 @@ function ApprovalQueue() {
           >
             <div className="modal-header">
               <h3 className="modal-title">
-                {confirmModal.action === 'approve' ? '✅ Approve Claim' : '❌ Reject Claim'}
+                {confirmModal.action === 'approve'
+                  ? '✅ Approve Claim'
+                  : confirmModal.action === 'reject'
+                    ? '❌ Reject Claim'
+                    : '❓ Raise Query / Concern'}
               </h3>
               <button className="modal-close-btn" onClick={closeConfirm}>
                 <HiOutlineX />
@@ -434,12 +472,14 @@ function ApprovalQueue() {
               <p style={{ fontSize: '14.5px', color: 'var(--text-secondary)', lineHeight: 1.6 }}>
                 {confirmModal.action === 'approve'
                   ? 'Are you sure you want to approve this reimbursement claim? It will advance to the next priority level or be fully approved.'
-                  : 'Are you sure you want to reject this claim? This action will terminate the approval workflow.'}
+                  : confirmModal.action === 'reject'
+                    ? 'Are you sure you want to reject this claim? This action will terminate the approval workflow.'
+                    : 'Are you sure you want to raise a query on this claim? This will suspend the approval process and notify the user to provide clarification.'}
               </p>
 
               <div className="form-group">
                 <label className="form-label" htmlFor="remark-input">
-                  Remark{confirmModal.action === 'reject' ? ' (required)' : ' (optional)'}
+                  Remark{confirmModal.action === 'approve' ? ' (optional)' : ' (required)'}
                 </label>
                 <textarea
                   id="remark-input"
@@ -447,7 +487,9 @@ function ApprovalQueue() {
                   placeholder={
                     confirmModal.action === 'approve'
                       ? 'Add an optional note…'
-                      : 'State the reason for rejection…'
+                      : confirmModal.action === 'reject'
+                        ? 'State the reason for rejection…'
+                        : 'Explain your query or concern…'
                   }
                   value={confirmModal.remark}
                   onChange={(e) =>
@@ -468,12 +510,16 @@ function ApprovalQueue() {
                 </button>
                 <button
                   className={
-                    confirmModal.action === 'approve' ? 'btn-confirm-approve' : 'btn-confirm-reject'
+                    confirmModal.action === 'approve'
+                      ? 'btn-confirm-approve'
+                      : confirmModal.action === 'reject'
+                        ? 'btn-confirm-reject'
+                        : 'btn-confirm-query'
                   }
                   onClick={handleConfirmAction}
                   disabled={
                     confirmModal.processing ||
-                    (confirmModal.action === 'reject' && !confirmModal.remark.trim())
+                    (confirmModal.action !== 'approve' && !confirmModal.remark.trim())
                   }
                   id="btn-confirm-action"
                 >
@@ -484,8 +530,10 @@ function ApprovalQueue() {
                     </>
                   ) : confirmModal.action === 'approve' ? (
                     'Confirm Approve'
-                  ) : (
+                  ) : confirmModal.action === 'reject' ? (
                     'Confirm Reject'
+                  ) : (
+                    'Confirm Raise Query'
                   )}
                 </button>
               </div>
