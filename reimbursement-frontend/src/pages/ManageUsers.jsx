@@ -750,6 +750,14 @@ function ManageUsers() {
           <button
             className="btn-secondary"
             style={{ padding: '8px 16px', fontSize: '13px' }}
+            onClick={() => navigate('/admin/history')}
+            id="btn-go-history"
+          >
+            View History
+          </button>
+          <button
+            className="btn-secondary"
+            style={{ padding: '8px 16px', fontSize: '13px' }}
             onClick={() => navigate('/admin/dashboard')}
             id="btn-go-approval-queue"
           >

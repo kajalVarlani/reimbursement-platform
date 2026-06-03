@@ -1,13 +1,15 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { useSelector } from 'react-redux';
+import { useSelector, useDispatch } from 'react-redux';
+import { logout } from '../store/authSlice';
 import { createReimbursement } from '../services/reimbursementService';
 import {
   HiOutlineUpload,
   HiOutlineChevronLeft,
   HiOutlineTrash,
   HiOutlinePaperClip,
-  HiOutlineCurrencyRupee
+  HiOutlineCurrencyRupee,
+  HiOutlineLogout
 } from 'react-icons/hi';
 import { TbFileInvoice } from 'react-icons/tb';
 import toast, { Toaster } from 'react-hot-toast';
@@ -25,7 +27,14 @@ const COMMITTEES = [
 
 function SubmitReimbursement() {
   const navigate = useNavigate();
+  const dispatch = useDispatch();
   const { user } = useSelector((state) => state.auth);
+
+  const handleLogout = () => {
+    dispatch(logout());
+    navigate('/login');
+    toast.success('Logged out successfully');
+  };
 
   const [committee, setCommittee] = useState('');
   const [event, setEvent] = useState('');
@@ -141,6 +150,10 @@ function SubmitReimbursement() {
             </div>
             <span>{user?.name || 'User'}</span>
           </div>
+          <button className="btn-logout" onClick={handleLogout} id="user-logout-btn">
+            <HiOutlineLogout />
+            Logout
+          </button>
         </div>
       </header>
 
