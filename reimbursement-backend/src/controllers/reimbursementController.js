@@ -1,11 +1,23 @@
 const prisma = require("../prisma/client");
 const cloudinary = require("../config/cloudinary");
+const crypto = require("crypto");
 
 // Helper to stream upload Multer buffer to Cloudinary
-const uploadToCloudinary = (fileBuffer) => {
+const uploadToCloudinary = (fileBuffer, mimetype) => {
   return new Promise((resolve, reject) => {
+    const isPdf = mimetype === "application/pdf";
+    const options = { folder: "reimbursements" };
+
+    if (isPdf) {
+      options.resource_type = "raw";
+      const randomName = crypto.randomBytes(16).toString("hex");
+      options.public_id = `${randomName}.pdf`;
+    } else {
+      options.resource_type = "auto";
+    }
+
     const stream = cloudinary.uploader.upload_stream(
-      { folder: "reimbursements" },
+      options,
       (error, result) => {
         if (error) return reject(error);
         resolve(result);
@@ -46,7 +58,7 @@ async function createReimbursement(req, res) {
       receiptUrl = "https://res.cloudinary.com/demo/image/upload/v1580976523/sample.jpg";
     } else {
       try {
-        const uploadResult = await uploadToCloudinary(req.file.buffer);
+        const uploadResult = await uploadToCloudinary(req.file.buffer, req.file.mimetype);
         receiptUrl = uploadResult.secure_url;
       } catch (uploadError) {
         console.error("Cloudinary upload failed:", uploadError);
