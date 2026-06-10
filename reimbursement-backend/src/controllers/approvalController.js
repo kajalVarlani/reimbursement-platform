@@ -1,5 +1,16 @@
 const prisma = require("../prisma/client");
 const transporter = require("../config/mailer");
+const { logActivity } = require("../services/activityLogService");
+
+// ─── Helper ───────────────────────────────────────────────────────────────────
+
+/** Returns the human-readable role string for an admin actor. */
+function adminActorRole(admin) {
+  if (admin.role === "SUPER_ADMIN") return "SUPER_ADMIN";
+  return admin.position ? admin.position.name : "ADMINISTRATOR";
+}
+
+// ─── Controllers ──────────────────────────────────────────────────────────────
 
 async function getVisibleReimbursements(req, res) {
   try {
@@ -28,6 +39,7 @@ async function getVisibleReimbursements(req, res) {
             },
             orderBy: { priority: "asc" },
           },
+          bills: { include: { bill: true } },
         },
         orderBy: { createdAt: "desc" },
       });
@@ -43,7 +55,6 @@ async function getVisibleReimbursements(req, res) {
 
     const priority = admin.position.priority;
 
-    // Fetch reimbursements at the administrator's priority level (PENDING or QUERY_RAISED)
     const reimbursements = await prisma.reimbursement.findMany({
       where: {
         status: { in: ["PENDING", "QUERY_RAISED"] },
@@ -51,23 +62,16 @@ async function getVisibleReimbursements(req, res) {
       },
       include: {
         user: {
-          select: {
-            id: true,
-            name: true,
-            email: true,
-          },
+          select: { id: true, name: true, email: true },
         },
         approvals: {
           include: {
             administrator: {
-              select: {
-                id: true,
-                name: true,
-                email: true,
-              },
+              select: { id: true, name: true, email: true },
             },
           },
         },
+        bills: { include: { bill: true } },
       },
       orderBy: { createdAt: "desc" },
     });
@@ -93,10 +97,7 @@ async function approveReimbursement(req, res) {
 
     const currentPriority = admin.position.priority;
 
-    // Fetch reimbursement
-    const reimbursement = await prisma.reimbursement.findUnique({
-      where: { id },
-    });
+    const reimbursement = await prisma.reimbursement.findUnique({ where: { id } });
 
     if (!reimbursement) {
       return res.status(404).json({ message: "Reimbursement not found" });
@@ -115,7 +116,7 @@ async function approveReimbursement(req, res) {
     }
 
     const result = await prisma.$transaction(async (tx) => {
-      // 1. Find or create the ReimbursementApproval record for this admin
+      // 1. Upsert the ReimbursementApproval record for this admin
       const existingApproval = await tx.reimbursementApproval.findFirst({
         where: {
           reimbursementId: id,
@@ -127,11 +128,7 @@ async function approveReimbursement(req, res) {
       if (existingApproval) {
         await tx.reimbursementApproval.update({
           where: { id: existingApproval.id },
-          data: {
-            status: "APPROVED",
-            remark,
-            actedAt: new Date(),
-          },
+          data: { status: "APPROVED", remark, actedAt: new Date() },
         });
       } else {
         await tx.reimbursementApproval.create({
@@ -146,56 +143,45 @@ async function approveReimbursement(req, res) {
         });
       }
 
-      // 2. Check if all administrators at the current priority have approved
-      const allAdminsAtLevel = await tx.administrator.findMany({
-        where: {
-          position: {
-            priority: currentPriority,
-          },
+      // 2. Log this admin's approval
+      await logActivity(
+        {
+          reimbursementId: id,
+          action: "APPROVED",
+          activity: remark ? `Approved with remark: ${remark}` : "Approved",
+          actorType: "ADMINISTRATOR",
+          administratorId: admin.id,
+          actorRole: adminActorRole(admin),
         },
+        tx
+      );
+
+      // 3. Check if all administrators at current priority have approved
+      const allAdminsAtLevel = await tx.administrator.findMany({
+        where: { position: { priority: currentPriority } },
       });
 
       const approvedAtLevel = await tx.reimbursementApproval.findMany({
-        where: {
-          reimbursementId: id,
-          priority: currentPriority,
-          status: "APPROVED",
-        },
+        where: { reimbursementId: id, priority: currentPriority, status: "APPROVED" },
       });
 
-      // Map to set of administrator IDs who approved
       const approvedAdminIds = new Set(approvedAtLevel.map((a) => a.administratorId));
       const allApproved = allAdminsAtLevel.every((adm) => approvedAdminIds.has(adm.id));
 
       if (allApproved) {
-        // Find next priority level
         const nextPosition = await tx.position.findFirst({
-          where: {
-            priority: {
-              gt: currentPriority,
-            },
-          },
-          orderBy: {
-            priority: "asc",
-          },
+          where: { priority: { gt: currentPriority } },
+          orderBy: { priority: "asc" },
         });
 
         if (nextPosition) {
-          // Advance priority level
           const updatedReimbursement = await tx.reimbursement.update({
             where: { id },
-            data: {
-              currentPriority: nextPosition.priority,
-            },
+            data: { currentPriority: nextPosition.priority },
           });
 
-          // Create pending approval records for the next level administrators
           const nextAdmins = await tx.administrator.findMany({
-            where: {
-              position: {
-                priority: nextPosition.priority,
-              },
-            },
+            where: { position: { priority: nextPosition.priority } },
           });
 
           if (nextAdmins.length > 0) {
@@ -211,12 +197,9 @@ async function approveReimbursement(req, res) {
 
           return { status: "ADVANCED", nextPriority: nextPosition.priority, reimbursement: updatedReimbursement };
         } else {
-          // No higher priority level: mark as fully APPROVED
           const updatedReimbursement = await tx.reimbursement.update({
             where: { id },
-            data: {
-              status: "APPROVED",
-            },
+            data: { status: "APPROVED" },
           });
 
           return { status: "APPROVED", reimbursement: updatedReimbursement };
@@ -255,10 +238,7 @@ async function rejectReimbursement(req, res) {
 
     const currentPriority = admin.position.priority;
 
-    // Fetch reimbursement
-    const reimbursement = await prisma.reimbursement.findUnique({
-      where: { id },
-    });
+    const reimbursement = await prisma.reimbursement.findUnique({ where: { id } });
 
     if (!reimbursement) {
       return res.status(404).json({ message: "Reimbursement not found" });
@@ -277,7 +257,6 @@ async function rejectReimbursement(req, res) {
     }
 
     const updatedReimbursement = await prisma.$transaction(async (tx) => {
-      // 1. Find or create the ReimbursementApproval record and set to REJECTED
       const existingApproval = await tx.reimbursementApproval.findFirst({
         where: {
           reimbursementId: id,
@@ -289,11 +268,7 @@ async function rejectReimbursement(req, res) {
       if (existingApproval) {
         await tx.reimbursementApproval.update({
           where: { id: existingApproval.id },
-          data: {
-            status: "REJECTED",
-            remark,
-            actedAt: new Date(),
-          },
+          data: { status: "REJECTED", remark, actedAt: new Date() },
         });
       } else {
         await tx.reimbursementApproval.create({
@@ -308,13 +283,24 @@ async function rejectReimbursement(req, res) {
         });
       }
 
-      // 2. Set overall reimbursement status to REJECTED
-      return await tx.reimbursement.update({
+      const r = await tx.reimbursement.update({
         where: { id },
-        data: {
-          status: "REJECTED",
-        },
+        data: { status: "REJECTED" },
       });
+
+      await logActivity(
+        {
+          reimbursementId: id,
+          action: "REJECTED",
+          activity: remark ? `Rejected with remark: ${remark}` : "Rejected",
+          actorType: "ADMINISTRATOR",
+          administratorId: admin.id,
+          actorRole: adminActorRole(admin),
+        },
+        tx
+      );
+
+      return r;
     });
 
     res.status(200).json({
@@ -347,13 +333,10 @@ async function raiseQuery(req, res) {
 
     const currentPriority = admin.position.priority;
 
-    // Fetch reimbursement with submitting user details
     const reimbursement = await prisma.reimbursement.findUnique({
       where: { id },
       include: {
-        user: {
-          select: { id: true, name: true, email: true },
-        },
+        user: { select: { id: true, name: true, email: true } },
       },
     });
 
@@ -373,9 +356,7 @@ async function raiseQuery(req, res) {
       });
     }
 
-    // Transactionally update approval record and reimbursement status
     const updatedReimbursement = await prisma.$transaction(async (tx) => {
-      // Find or create the approval record for this admin
       const existingApproval = await tx.reimbursementApproval.findFirst({
         where: {
           reimbursementId: id,
@@ -387,11 +368,7 @@ async function raiseQuery(req, res) {
       if (existingApproval) {
         await tx.reimbursementApproval.update({
           where: { id: existingApproval.id },
-          data: {
-            status: "QUERY_RAISED",
-            remark: remark.trim(),
-            actedAt: new Date(),
-          },
+          data: { status: "QUERY_RAISED", remark: remark.trim(), actedAt: new Date() },
         });
       } else {
         await tx.reimbursementApproval.create({
@@ -406,16 +383,28 @@ async function raiseQuery(req, res) {
         });
       }
 
-      // Set overall reimbursement status to QUERY_RAISED
-      return await tx.reimbursement.update({
+      const r = await tx.reimbursement.update({
         where: { id },
         data: { status: "QUERY_RAISED" },
       });
+
+      await logActivity(
+        {
+          reimbursementId: id,
+          action: "QUERY_RAISED",
+          activity: `Query raised: ${remark.trim()}`,
+          actorType: "ADMINISTRATOR",
+          administratorId: admin.id,
+          actorRole: adminActorRole(admin),
+        },
+        tx
+      );
+
+      return r;
     });
 
-    // Send email to the submitting user with the concern
-    const userEmail = reimbursement.user.email;
-    const userName = reimbursement.user.name;
+    // Send email notification to the submitting user
+    const { email: userEmail, name: userName } = reimbursement.user;
     try {
       await transporter.sendMail({
         from: process.env.EMAIL_USER,
@@ -460,7 +449,6 @@ async function getApprovalHistory(req, res) {
   try {
     const admin = req.admin;
 
-    // Fetch all approval records this admin has acted on (non-PENDING)
     const approvals = await prisma.reimbursementApproval.findMany({
       where: {
         administratorId: admin.id,
@@ -469,17 +457,14 @@ async function getApprovalHistory(req, res) {
       include: {
         reimbursement: {
           include: {
-            user: {
-              select: { id: true, name: true, email: true },
-            },
+            user: { select: { id: true, name: true, email: true } },
             approvals: {
               include: {
-                administrator: {
-                  select: { id: true, name: true, email: true },
-                },
+                administrator: { select: { id: true, name: true, email: true } },
               },
               orderBy: { priority: "asc" },
             },
+            bills: { include: { bill: true } },
           },
         },
       },
@@ -493,10 +478,109 @@ async function getApprovalHistory(req, res) {
   }
 }
 
+/**
+ * POST /api/admin/reimbursements/:id/mark-paid
+ *
+ * Super Admin only — marks an APPROVED reimbursement as paid.
+ */
+async function markAsPaid(req, res) {
+  try {
+    const { id } = req.params;
+    const admin = req.admin;
+
+    if (admin.role !== "SUPER_ADMIN") {
+      return res.status(403).json({
+        message: "Forbidden: Only Super Admins can mark reimbursements as paid",
+      });
+    }
+
+    const reimbursement = await prisma.reimbursement.findUnique({ where: { id } });
+
+    if (!reimbursement) {
+      return res.status(404).json({ message: "Reimbursement not found" });
+    }
+
+    if (reimbursement.status !== "APPROVED") {
+      return res.status(400).json({
+        message: `Only APPROVED reimbursements can be marked as paid. Current status: ${reimbursement.status}`,
+      });
+    }
+
+    if (reimbursement.isPaid) {
+      return res.status(409).json({ message: "Reimbursement is already marked as paid" });
+    }
+
+    const updated = await prisma.$transaction(async (tx) => {
+      const r = await tx.reimbursement.update({
+        where: { id },
+        data: { isPaid: true, paidAt: new Date() },
+      });
+
+      await logActivity(
+        {
+          reimbursementId: id,
+          action: "PAYMENT_MARKED",
+          activity: "Reimbursement marked as paid",
+          actorType: "ADMINISTRATOR",
+          administratorId: admin.id,
+          actorRole: "SUPER_ADMIN",
+        },
+        tx
+      );
+
+      return r;
+    });
+
+    res.status(200).json({
+      message: "Reimbursement marked as paid",
+      reimbursement: updated,
+    });
+  } catch (error) {
+    console.error("Mark as paid error:", error);
+    res.status(500).json({ message: "Internal Server Error" });
+  }
+}
+
+/**
+ * GET /api/admin/reimbursements/:id/activity
+ *
+ * Returns the full activity log for a reimbursement (admin access).
+ */
+async function getActivityLog(req, res) {
+  try {
+    const { id } = req.params;
+
+    const reimbursement = await prisma.reimbursement.findUnique({
+      where: { id },
+      select: { id: true },
+    });
+
+    if (!reimbursement) {
+      return res.status(404).json({ message: "Reimbursement not found" });
+    }
+
+    const logs = await prisma.activityLog.findMany({
+      where: { reimbursementId: id },
+      orderBy: { createdAt: "asc" },
+      include: {
+        user: { select: { id: true, name: true, email: true } },
+        administrator: { select: { id: true, name: true, email: true } },
+      },
+    });
+
+    res.status(200).json(logs);
+  } catch (error) {
+    console.error("Get activity log (admin) error:", error);
+    res.status(500).json({ message: "Internal Server Error" });
+  }
+}
+
 module.exports = {
   getVisibleReimbursements,
   approveReimbursement,
   rejectReimbursement,
   raiseQuery,
   getApprovalHistory,
+  markAsPaid,
+  getActivityLog,
 };

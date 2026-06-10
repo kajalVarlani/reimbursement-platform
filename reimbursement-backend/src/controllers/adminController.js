@@ -281,8 +281,8 @@ async function deletePosition(req, res) {
 
 async function listAllReimbursements(req, res) {
   try {
-    const { status } = req.query; // optional filter: ?status=PENDING|APPROVED|REJECTED|QUERY_RAISED
-
+    // Optional filter: ?status=PENDING|APPROVED|REJECTED|QUERY_RAISED|CANCELLED
+    const { status } = req.query;
     const where = status ? { status } : {};
 
     const reimbursements = await prisma.reimbursement.findMany({
@@ -303,6 +303,9 @@ async function listAllReimbursements(req, res) {
             },
           },
           orderBy: { priority: "asc" },
+        },
+        bills: {
+          include: { bill: true },
         },
       },
       orderBy: { createdAt: "desc" },
