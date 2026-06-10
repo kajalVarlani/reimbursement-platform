@@ -7,6 +7,10 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
+// ─────────────────────────────────────────────
+// Enums
+// ─────────────────────────────────────────────
+
 enum AdminRole {
   SUPER_ADMIN
   ADMINISTRATOR
@@ -17,6 +21,7 @@ enum ReimbursementStatus {
   APPROVED
   REJECTED
   QUERY_RAISED
+  CANCELLED
 }
 
 enum ApprovalStatus {
@@ -26,96 +31,218 @@ enum ApprovalStatus {
   QUERY_RAISED
 }
 
+/// Who performed the activity — either a User or an Administrator.
+enum ActorType {
+  USER
+  ADMINISTRATOR
+}
+
+/// High-level activity categories recorded in the audit log.
+enum ActivityAction {
+  SUBMITTED
+  APPROVED
+  REJECTED
+  QUERY_RAISED
+  CANCELLED
+  RESUBMITTED
+  PAYMENT_MARKED
+  BILL_ATTACHED
+  BILL_DETACHED
+  REMARK_ADDED
+  OTHER
+}
+
+// ─────────────────────────────────────────────
+// Models
+// ─────────────────────────────────────────────
+
 model User {
-  id                String   @id @default(cuid())
+  id               String          @id @default(cuid())
 
-  name              String
-  email             String   @unique
-  password          String
+  name             String
+  email            String          @unique
+  password         String
 
-  resetToken        String?
-  resetTokenExpiry  DateTime?
+  resetToken       String?
+  resetTokenExpiry DateTime?
 
-  reimbursements    Reimbursement[]
+  reimbursements   Reimbursement[]
+  activityLogs     ActivityLog[]
 
-  createdAt         DateTime @default(now())
-  updatedAt         DateTime @updatedAt
+  createdAt        DateTime        @default(now())
+  updatedAt        DateTime        @updatedAt
 }
 
 model Position {
-  id                String   @id @default(cuid())
+  id             String          @id @default(cuid())
 
-  name              String   @unique
-  priority          Int
+  name           String          @unique
+  priority       Int
 
-  administrators    Administrator[]
+  administrators Administrator[]
 
-  createdAt         DateTime @default(now())
-  updatedAt         DateTime @updatedAt
+  createdAt      DateTime        @default(now())
+  updatedAt      DateTime        @updatedAt
 }
 
 model Administrator {
-  id                String   @id @default(cuid())
+  id               String                  @id @default(cuid())
 
-  name              String
-  email             String   @unique
-  password          String
+  name             String
+  email            String                  @unique
+  password         String
 
-  role              AdminRole
+  role             AdminRole
 
-  resetToken        String?
-  resetTokenExpiry  DateTime?
+  resetToken       String?
+  resetTokenExpiry DateTime?
 
-  positionId        String?
-  position          Position? @relation(fields: [positionId], references: [id])
+  positionId       String?
+  position         Position?               @relation(fields: [positionId], references: [id])
 
-  approvals         ReimbursementApproval[]
+  approvals        ReimbursementApproval[]
+  activityLogs     ActivityLog[]
 
-  createdAt         DateTime @default(now())
-  updatedAt         DateTime @updatedAt
+  createdAt        DateTime                @default(now())
+  updatedAt        DateTime                @updatedAt
 }
 
 model Reimbursement {
-  id                String   @id @default(cuid())
+  id              String                  @id @default(cuid())
 
-  committee         String
-  event             String
+  committee       String
+  event           String
 
-  amount            Float
-  description       String?
+  amount          Float
+  description     String?
 
-  receiptUrl        String
+  status          ReimbursementStatus     @default(PENDING)
 
-  status            ReimbursementStatus @default(PENDING)
+  currentPriority Int                     @default(1)
 
-  currentPriority   Int @default(1)
+  /// Whether the reimbursement has been paid out.
+  isPaid          Boolean                 @default(false)
+  paidAt          DateTime?
 
-  userId            String
-  user              User @relation(fields: [userId], references: [id])
+  userId          String
+  user            User                    @relation(fields: [userId], references: [id])
 
-  approvals         ReimbursementApproval[]
+  approvals       ReimbursementApproval[]
+  bills           ReimbursementBill[]
+  activityLogs    ActivityLog[]
 
-  createdAt         DateTime @default(now())
-  updatedAt         DateTime @updatedAt
+  createdAt       DateTime                @default(now())
+  updatedAt       DateTime                @updatedAt
+}
+
+model Bill {
+  id               String              @id @default(cuid())
+
+  vendorName       String?
+
+  invoiceNumber    String?
+  transactionId    String?
+
+  billDate         DateTime?
+  amount           Float
+
+  receiptUrl       String
+
+  /**
+   * Used to prevent duplicate bill creation.
+   * Can be generated from:
+   * vendor + invoiceNumber + billDate + amount
+   * OR transactionId
+   */
+  uniqueIdentifier String              @unique
+
+  reimbursements   ReimbursementBill[]
+
+  createdAt        DateTime            @default(now())
+  updatedAt        DateTime            @updatedAt
+
+  @@index([invoiceNumber])
+  @@index([transactionId])
+}
+
+model ReimbursementBill {
+  id              String        @id @default(cuid())
+
+  reimbursementId String
+  reimbursement   Reimbursement @relation(fields: [reimbursementId], references: [id])
+
+  billId          String
+  bill            Bill          @relation(fields: [billId], references: [id])
+
+  /**
+   * Amount from this bill allocated to this reimbursement.
+   *
+   * Example:
+   * Bill = ₹10,000
+   * Reimbursement A = ₹6,000
+   * Reimbursement B = ₹4,000
+   */
+  allocatedAmount Float
+
+  createdAt       DateTime      @default(now())
+
+  @@unique([reimbursementId, billId])
 }
 
 model ReimbursementApproval {
-  id                    String   @id @default(cuid())
+  id              String        @id @default(cuid())
 
-  reimbursementId       String
-  reimbursement         Reimbursement @relation(fields: [reimbursementId], references: [id])
+  reimbursementId String
+  reimbursement   Reimbursement @relation(fields: [reimbursementId], references: [id])
 
-  administratorId       String
-  administrator         Administrator @relation(fields: [administratorId], references: [id])
+  administratorId String
+  administrator   Administrator @relation(fields: [administratorId], references: [id])
 
-  priority              Int
+  priority        Int
 
-  status                ApprovalStatus @default(PENDING)
+  status          ApprovalStatus @default(PENDING)
 
-  remark                String?
+  remark          String?
 
-  actedAt               DateTime?
+  actedAt         DateTime?
 
-  createdAt             DateTime @default(now())
-  updatedAt             DateTime @updatedAt
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+}
+
+/// Immutable audit trail for every significant event on a reimbursement.
+model ActivityLog {
+  id              String         @id @default(cuid())
+
+  reimbursementId String
+  reimbursement   Reimbursement  @relation(fields: [reimbursementId], references: [id])
+
+  /// The high-level action that occurred.
+  action          ActivityAction
+
+  /// Free-form description / remark text for this activity.
+  activity        String?
+
+  // ── Actor ───────────────────────────────────────────────────────────────
+  /// Whether the actor is a regular User or an Administrator.
+  actorType       ActorType
+
+  /// Populated when actorType = USER.
+  userId          String?
+  user            User?          @relation(fields: [userId], references: [id])
+
+  /// Populated when actorType = ADMINISTRATOR.
+  administratorId String?
+  administrator   Administrator? @relation(fields: [administratorId], references: [id])
+
+  /// Role of the actor at the time of the action (e.g. "SUPER_ADMIN",
+  /// "ADMINISTRATOR", position name, or "USER"). Stored as a plain string so
+  /// historical entries remain accurate even if the actor's role changes later.
+  actorRole       String
+
+  createdAt       DateTime       @default(now())
+
+  @@index([reimbursementId])
+  @@index([userId])
+  @@index([administratorId])
 }
