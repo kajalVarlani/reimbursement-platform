@@ -265,15 +265,34 @@ function UserDashboard() {
                 </div>
               )}
               <div className="detail-row" style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                <span className="detail-label">Receipt Image</span>
+                <span className="detail-label">Receipt Document / Image</span>
                 {selectedClaim.receiptUrl ? (
-                  <a href={selectedClaim.receiptUrl} target="_blank" rel="noopener noreferrer">
-                    <img
-                      src={selectedClaim.receiptUrl}
-                      alt="Receipt Scan"
-                      className="receipt-image-preview"
-                    />
-                  </a>
+                  selectedClaim.receiptUrl.toLowerCase().includes('.pdf') ? (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', width: '100%' }}>
+                      <iframe
+                        src={selectedClaim.receiptUrl}
+                        title="Receipt PDF"
+                        style={{ width: '100%', height: '350px', border: '1px solid var(--wc-100)', borderRadius: '6px' }}
+                      />
+                      <a
+                        href={selectedClaim.receiptUrl}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="btn-secondary"
+                        style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: '6px', padding: '8px 16px', textDecoration: 'none', textAlign: 'center', fontSize: '13px' }}
+                      >
+                        Open PDF in New Tab
+                      </a>
+                    </div>
+                  ) : (
+                    <a href={selectedClaim.receiptUrl} target="_blank" rel="noopener noreferrer">
+                      <img
+                        src={selectedClaim.receiptUrl}
+                        alt="Receipt Scan"
+                        className="receipt-image-preview"
+                      />
+                    </a>
+                  )
                 ) : (
                   <span className="detail-value text-muted">No scan available</span>
                 )}

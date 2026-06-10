@@ -77,14 +77,14 @@ function SubmitReimbursement() {
   };
 
   const validateFile = (selectedFile) => {
-    const isImage = selectedFile.type.startsWith('image/');
-    if (!isImage) {
-      toast.error('Please upload an image file (PNG, JPG, JPEG)');
+    const allowedTypes = ['image/jpeg', 'image/jpg', 'image/png', 'application/pdf'];
+    if (!allowedTypes.includes(selectedFile.type)) {
+      toast.error('Please upload a PDF, PNG, JPG, or JPEG file');
       return false;
     }
-    const isUnderLimit = selectedFile.size <= 5 * 1024 * 1024; // 5MB limit
+    const isUnderLimit = selectedFile.size <= 10 * 1024 * 1024; // 10MB limit
     if (!isUnderLimit) {
-      toast.error('File size must be under 5MB');
+      toast.error('File size must be under 10MB');
       return false;
     }
     return true;
@@ -275,12 +275,12 @@ function SubmitReimbursement() {
                     id="receipt-upload-input"
                     type="file"
                     style={{ display: 'none' }}
-                    accept="image/*"
+                    accept="image/jpeg,image/jpg,image/png,application/pdf"
                     onChange={handleFileChange}
                   />
                   <HiOutlineUpload className="upload-icon" />
-                  <span className="upload-title">Drag & drop your receipt image here</span>
-                  <span className="upload-subtitle">or click to browse from device (max 5MB, PNG/JPG/JPEG)</span>
+                  <span className="upload-title">Drag &amp; drop your receipt here</span>
+                  <span className="upload-subtitle">or click to browse from device (max 10MB, PDF/PNG/JPG/JPEG)</span>
                 </div>
               ) : (
                 <div className="file-preview-box" id="file-uploaded-preview">
