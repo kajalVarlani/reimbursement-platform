@@ -73,6 +73,20 @@ async function listUsers(req, res) {
 async function deleteUser(req, res) {
   try {
     const { id } = req.params;
+
+    // Guard: reject deletion if the user has any associated reimbursements.
+    // Without onDelete: Cascade in the schema, Prisma would throw an FK
+    // constraint violation and return a cryptic 500.
+    const reimbursementCount = await prisma.reimbursement.count({
+      where: { userId: id },
+    });
+
+    if (reimbursementCount > 0) {
+      return res.status(400).json({
+        message: `Cannot delete user: they have ${reimbursementCount} existing reimbursement(s). Reassign or remove them first.`,
+      });
+    }
+
     await prisma.user.delete({ where: { id } });
     res.status(200).json({ message: "User deleted successfully" });
   } catch (error) {
@@ -171,6 +185,19 @@ async function deleteAdmin(req, res) {
     // Prevent self deletion
     if (id === req.admin.id) {
       return res.status(400).json({ message: "Cannot delete yourself" });
+    }
+
+    // Guard: reject deletion if the administrator has any approval records.
+    // Without onDelete: Cascade in the schema, Prisma would throw an FK
+    // constraint violation and return a cryptic 500.
+    const approvalCount = await prisma.reimbursementApproval.count({
+      where: { administratorId: id },
+    });
+
+    if (approvalCount > 0) {
+      return res.status(400).json({
+        message: `Cannot delete administrator: they have ${approvalCount} existing approval record(s). Remove those records first.`,
+      });
     }
 
     await prisma.administrator.delete({ where: { id } });
