@@ -344,7 +344,7 @@ async function raiseQuery(req, res) {
       return res.status(404).json({ message: "Reimbursement not found" });
     }
 
-    if (reimbursement.status !== "PENDING") {
+    if (reimbursement.status !== "PENDING" && reimbursement.status !== "QUERY_RAISED") {
       return res.status(400).json({
         message: `Cannot raise a query on a reimbursement that is in ${reimbursement.status} status`,
       });
