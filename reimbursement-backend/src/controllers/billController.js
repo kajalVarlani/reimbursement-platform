@@ -169,6 +169,27 @@ async function attachBill(req, res) {
         });
       }
 
+      // ── Cross-reimbursement over-allocation check ────────────────────────────
+      // Sum all existing allocations for this bill across every reimbursement,
+      // then verify that adding the new allocation stays within the bill total.
+      const allocationAggregate = await tx.reimbursementBill.aggregate({
+        where: { billId: bill.id },
+        _sum: { allocatedAmount: true },
+      });
+
+      const existingTotal = allocationAggregate._sum.allocatedAmount?.toNumber?.() ??
+        Number(allocationAggregate._sum.allocatedAmount ?? 0);
+
+      if (existingTotal + allocatedFloat > bill.amount) {
+        throw Object.assign(
+          new Error(
+            `Over-allocation: ₹${allocatedFloat.toFixed(2)} requested, but only ₹${(bill.amount - existingTotal).toFixed(2)} remains unallocated on this bill`
+          ),
+          { statusCode: 400 }
+        );
+      }
+      // ────────────────────────────────────────────────────────────────────────
+
       const rb = await tx.reimbursementBill.create({
         data: {
           reimbursementId,

@@ -51,6 +51,10 @@ async function createReimbursement(req, res) {
 
 
     // Upload to Cloudinary
+    if (!req.file) {
+      return res.status(400).json({ message: "Receipt is required" });
+    }
+
     let receiptUrl;
     if (!process.env.CLOUDINARY_API_KEY || !process.env.CLOUDINARY_CLOUD_NAME) {
       console.warn("Cloudinary not configured. Using fallback mock receipt URL.");
