@@ -8,6 +8,7 @@
 const prisma = require("../prisma/client");
 const cloudinary = require("../config/cloudinary");
 const { logActivity } = require("../services/activityLogService");
+const { randomUUID } = require("crypto");
 
 // ─── Cloudinary upload helper ─────────────────────────────────────────────────
 
@@ -29,10 +30,28 @@ const uploadToCloudinary = (fileBuffer) => {
 
 /**
  * Build a uniqueIdentifier from bill metadata.
- * Falls back to transactionId if provided.
+ *
+ * Priority:
+ *   1. transactionId              → "txn:<id>"
+ *   2. invoiceNumber OR vendorName → "inv:<vendor>|<invoice>|<date>|<amount>"
+ *   3. No identifiable metadata   → "uniq:<uuid>"  (never deduplicates)
+ *
+ * Requiring at least one of transactionId / invoiceNumber / vendorName
+ * prevents two unrelated bills that share only an amount from being
+ * incorrectly merged into the same Bill record.
  */
 function buildUniqueIdentifier({ vendorName, invoiceNumber, billDate, amount, transactionId }) {
   if (transactionId) return `txn:${transactionId.trim()}`;
+
+  const hasInvoice = invoiceNumber && invoiceNumber.trim() !== "";
+  const hasVendor = vendorName && vendorName.trim() !== "";
+
+  if (!hasInvoice && !hasVendor) {
+    // No meaningful metadata — generate a one-time UUID so this bill is
+    // never accidentally deduplicated with any other bill.
+    return `uniq:${randomUUID()}`;
+  }
+
   const parts = [
     (vendorName || "").trim().toLowerCase(),
     (invoiceNumber || "").trim().toLowerCase(),
