@@ -268,6 +268,31 @@ async function updatePosition(req, res) {
       return res.status(400).json({ message: "Priority must be an integer" });
     }
 
+    // Fetch the current position so we can check if the priority is actually changing
+    const existingPosition = await prisma.position.findUnique({ where: { id } });
+    if (!existingPosition) {
+      return res.status(404).json({ message: "Position not found" });
+    }
+
+    // Block a priority number change when active reimbursements sit at the old level.
+    // Changing the priority value while claims point to it would leave those claims
+    // stuck — their currentPriority would reference a priority level that no longer
+    // exists, making them invisible to every admin.
+    if (priorityInt !== existingPosition.priority) {
+      const activeCount = await prisma.reimbursement.count({
+        where: {
+          currentPriority: existingPosition.priority,
+          status: { in: ["PENDING", "QUERY_RAISED"] },
+        },
+      });
+
+      if (activeCount > 0) {
+        return res.status(400).json({
+          message: `Cannot change priority: ${activeCount} active reimbursement(s) are currently at priority ${existingPosition.priority}. Resolve them first.`,
+        });
+      }
+    }
+
     const position = await prisma.position.update({
       where: { id },
       data: {
@@ -295,6 +320,28 @@ async function deletePosition(req, res) {
     if (adminsCount > 0) {
       return res.status(400).json({
         message: "Cannot delete position. Some administrators are assigned to it.",
+      });
+    }
+
+    // Also block deletion when active reimbursements are sitting at this priority.
+    // If all admins are first reassigned away and then the position is deleted,
+    // any in-flight claims whose currentPriority points here become permanently
+    // stuck — visible to nobody and actionable by nobody.
+    const position = await prisma.position.findUnique({ where: { id } });
+    if (!position) {
+      return res.status(404).json({ message: "Position not found" });
+    }
+
+    const activeCount = await prisma.reimbursement.count({
+      where: {
+        currentPriority: position.priority,
+        status: { in: ["PENDING", "QUERY_RAISED"] },
+      },
+    });
+
+    if (activeCount > 0) {
+      return res.status(400).json({
+        message: `Cannot delete position: ${activeCount} active reimbursement(s) are currently awaiting review at this priority level. Resolve them first.`,
       });
     }
 
