@@ -12,10 +12,22 @@ const { randomUUID } = require("crypto");
 
 // ─── Cloudinary upload helper ─────────────────────────────────────────────────
 
-const uploadToCloudinary = (fileBuffer) => {
+const uploadToCloudinary = (fileBuffer, mimetype) => {
   return new Promise((resolve, reject) => {
+    const isPdf = mimetype === "application/pdf";
+    const options = { folder: "bills" };
+
+    if (isPdf) {
+      options.resource_type = "raw";
+      // Generate a random name/UUID to keep public ID unique
+      const randomName = randomUUID();
+      options.public_id = `${randomName}.pdf`;
+    } else {
+      options.resource_type = "auto";
+    }
+
     const stream = cloudinary.uploader.upload_stream(
-      { folder: "bills" },
+      options,
       (error, result) => {
         if (error) return reject(error);
         resolve(result);
@@ -101,11 +113,26 @@ async function attachBill(req, res) {
       return res.status(400).json({ message: "Receipt file is required" });
     }
 
+    // Validate file type (mimetype) to only allow image/* and application/pdf
+    if (!req.file.mimetype.startsWith("image/") && req.file.mimetype !== "application/pdf") {
+      return res.status(400).json({
+        message: "Invalid file format. Only image files and PDF are allowed.",
+      });
+    }
+
     const amountFloat = parseFloat(amount);
     const allocatedFloat = parseFloat(allocatedAmount);
 
     if (isNaN(amountFloat) || isNaN(allocatedFloat)) {
       return res.status(400).json({ message: "amount and allocatedAmount must be numbers" });
+    }
+
+    if (amountFloat <= 0) {
+      return res.status(400).json({ message: "amount must be greater than zero" });
+    }
+
+    if (allocatedFloat <= 0) {
+      return res.status(400).json({ message: "allocatedAmount must be greater than zero" });
     }
 
     if (allocatedFloat > amountFloat) {
@@ -141,7 +168,7 @@ async function attachBill(req, res) {
       console.warn("Cloudinary not configured. Using fallback mock receipt URL.");
       receiptUrl = "https://res.cloudinary.com/demo/image/upload/v1580976523/sample.jpg";
     } else {
-      const uploadResult = await uploadToCloudinary(req.file.buffer);
+      const uploadResult = await uploadToCloudinary(req.file.buffer, req.file.mimetype);
       receiptUrl = uploadResult.secure_url;
     }
 
