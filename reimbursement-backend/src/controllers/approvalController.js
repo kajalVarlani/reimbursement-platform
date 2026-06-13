@@ -192,6 +192,11 @@ async function approveReimbursement(req, res) {
                 priority: nextPosition.priority,
                 status: "PENDING",
               })),
+              // Guard against the race condition where two admins at the same
+              // level approve simultaneously: both may independently conclude
+              // "all approved" and attempt to insert identical stubs for the
+              // next level. skipDuplicates prevents a crash / ghost records.
+              skipDuplicates: true,
             });
           }
 
@@ -344,7 +349,7 @@ async function raiseQuery(req, res) {
       return res.status(404).json({ message: "Reimbursement not found" });
     }
 
-    if (reimbursement.status !== "PENDING" && reimbursement.status !== "QUERY_RAISED") {
+    if (reimbursement.status !== "QUERY_RAISED") {
       return res.status(400).json({
         message: `Cannot raise a query on a reimbursement that is in ${reimbursement.status} status`,
       });
@@ -530,6 +535,48 @@ async function markAsPaid(req, res) {
 
       return r;
     });
+
+    // Re-fetch with the user relation so we can send the confirmation email
+    const reimbursementWithUser = await prisma.reimbursement.findUnique({
+      where: { id },
+      include: { user: { select: { name: true, email: true } } },
+    });
+
+    // Notify the submitting user that their payment is on the way.
+    // This runs outside the transaction: a mail failure must never roll back
+    // the payment mark that was already committed.
+    if (reimbursementWithUser?.user) {
+      const { name: userName, email: userEmail } = reimbursementWithUser.user;
+      try {
+        await transporter.sendMail({
+          from: process.env.EMAIL_USER,
+          to: userEmail,
+          subject: `Payment Processed for Your Reimbursement - ${reimbursementWithUser.event}`,
+          html: `
+            <h2>Your Reimbursement Has Been Paid</h2>
+            <p>Dear ${userName},</p>
+            <p>Great news! Your reimbursement request has been fully approved and payment has now been processed.</p>
+
+            <table style="border-collapse:collapse;width:100%;margin:16px 0;">
+              <tr><td style="padding:8px;font-weight:bold;background:#f3f4f6;">Event</td><td style="padding:8px;">${reimbursementWithUser.event}</td></tr>
+              <tr><td style="padding:8px;font-weight:bold;background:#f3f4f6;">Committee</td><td style="padding:8px;">${reimbursementWithUser.committee}</td></tr>
+              <tr><td style="padding:8px;font-weight:bold;background:#f3f4f6;">Amount</td><td style="padding:8px;">₹${reimbursementWithUser.amount.toFixed(2)}</td></tr>
+              <tr><td style="padding:8px;font-weight:bold;background:#f3f4f6;">Paid On</td><td style="padding:8px;">${new Date(updated.paidAt).toLocaleDateString("en-IN", { day: "numeric", month: "long", year: "numeric" })}</td></tr>
+            </table>
+
+            <div style="background:#d1fae5;border-left:4px solid #10b981;padding:12px 16px;margin:16px 0;">
+              <p style="margin:0;font-weight:bold;">Payment confirmed ✅</p>
+              <p style="margin:8px 0 0;">The amount of ₹${reimbursementWithUser.amount.toFixed(2)} has been marked as disbursed. Please allow a short processing window for the funds to reflect in your account.</p>
+            </div>
+
+            <p>If you have any questions, please reach out to the finance team.</p>
+            <p style="color:#9CA3AF;font-size:12px;">This is an automated notification from the Reimbursement Platform.</p>
+          `,
+        });
+      } catch (mailError) {
+        console.warn(`Could not send payment confirmation email to ${userEmail}:`, mailError.message);
+      }
+    }
 
     res.status(200).json({
       message: "Reimbursement marked as paid",
