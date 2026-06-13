@@ -134,9 +134,9 @@ async function approveReimbursement(req, res) {
       return res.status(404).json({ message: "Reimbursement not found" });
     }
 
-    if (reimbursement.status !== "PENDING" && reimbursement.status !== "QUERY_RAISED") {
+    if (reimbursement.status !== "PENDING") {
       return res.status(400).json({
-        message: `Reimbursement is already in ${reimbursement.status} status`,
+        message: `Reimbursement is already in ${reimbursement.status} status. It must be PENDING to be approved.`,
       });
     }
 
@@ -280,9 +280,9 @@ async function rejectReimbursement(req, res) {
       return res.status(404).json({ message: "Reimbursement not found" });
     }
 
-    if (reimbursement.status !== "PENDING" && reimbursement.status !== "QUERY_RAISED") {
+    if (reimbursement.status !== "PENDING") {
       return res.status(400).json({
-        message: `Reimbursement is already in ${reimbursement.status} status`,
+        message: `Reimbursement is already in ${reimbursement.status} status. It must be PENDING to be rejected.`,
       });
     }
 
@@ -380,9 +380,9 @@ async function raiseQuery(req, res) {
       return res.status(404).json({ message: "Reimbursement not found" });
     }
 
-    if (reimbursement.status !== "QUERY_RAISED") {
+    if (reimbursement.status !== "PENDING") {
       return res.status(400).json({
-        message: `Cannot raise a query on a reimbursement that is in ${reimbursement.status} status`,
+        message: `Cannot raise a query on a reimbursement that is in ${reimbursement.status} status. It must be PENDING to raise a query.`,
       });
     }
 

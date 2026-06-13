@@ -199,6 +199,12 @@ async function attachBill(req, res) {
         });
       }
 
+      // Lock the Bill row to prevent concurrent race conditions during allocation aggregate checks
+      await tx.bill.update({
+        where: { id: bill.id },
+        data: { updatedAt: new Date() },
+      });
+
       // Check if already attached
       const existing = await tx.reimbursementBill.findUnique({
         where: {
