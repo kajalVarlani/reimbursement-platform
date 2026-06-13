@@ -49,6 +49,12 @@ async function createReimbursement(req, res) {
       });
     }
 
+    if (amountFloat <= 0) {
+      return res.status(400).json({
+        message: "Amount must be greater than zero",
+      });
+    }
+
 
     // Upload to Cloudinary
     if (!req.file) {
@@ -318,10 +324,130 @@ async function getActivityLog(req, res) {
   }
 }
 
+/**
+ * POST /api/user/reimbursements/:id/resubmit
+ * Allows a user to resubmit a reimbursement that has a QUERY_RAISED status.
+ */
+async function resubmitReimbursement(req, res) {
+  try {
+    const { id } = req.params;
+    const { remark } = req.body;
+
+    const reimbursement = await prisma.reimbursement.findUnique({
+      where: { id },
+      include: {
+        user: { select: { id: true, name: true, email: true } },
+      },
+    });
+
+    if (!reimbursement) {
+      return res.status(404).json({ message: "Reimbursement not found" });
+    }
+
+    if (reimbursement.userId !== req.user.id) {
+      return res.status(403).json({
+        message: "Forbidden: You can only resubmit your own reimbursements",
+      });
+    }
+
+    if (reimbursement.status !== "QUERY_RAISED") {
+      return res.status(400).json({
+        message: `Cannot resubmit a reimbursement that is in ${reimbursement.status} status. Only QUERY_RAISED claims can be resubmitted.`,
+      });
+    }
+
+    const currentPriority = reimbursement.currentPriority;
+
+    const updated = await prisma.$transaction(async (tx) => {
+      // 1. Transition status back to PENDING
+      const r = await tx.reimbursement.update({
+        where: { id },
+        data: { status: "PENDING" },
+      });
+
+      // 2. Set any QUERY_RAISED approvals at currentPriority back to PENDING
+      await tx.reimbursementApproval.updateMany({
+        where: {
+          reimbursementId: id,
+          priority: currentPriority,
+          status: "QUERY_RAISED",
+        },
+        data: {
+          status: "PENDING",
+        },
+      });
+
+      // 3. Log the resubmission activity
+      await logActivity(
+        {
+          reimbursementId: id,
+          action: "RESUBMITTED",
+          activity: remark ? `Resubmitted with remark: ${remark.trim()}` : "Resubmitted",
+          actorType: "USER",
+          userId: req.user.id,
+          actorRole: "USER",
+        },
+        tx
+      );
+
+      return r;
+    });
+
+    // 4. Send email notification to administrators at the current priority level
+    const admins = await prisma.administrator.findMany({
+      where: { position: { priority: currentPriority } },
+    });
+
+    const transporter = require("../config/mailer");
+    for (const admin of admins) {
+      try {
+        await transporter.sendMail({
+          from: process.env.EMAIL_USER,
+          to: admin.email,
+          subject: `Reimbursement Resubmitted - ${reimbursement.event}`,
+          html: `
+            <h2>Reimbursement Resubmitted</h2>
+            <p>Dear ${admin.name},</p>
+            <p>The submitting user has resubmitted their reimbursement request after addressing a query/concern.</p>
+
+            <table style="border-collapse:collapse;width:100%;margin:16px 0;">
+              <tr><td style="padding:8px;font-weight:bold;background:#f3f4f6;">Event</td><td style="padding:8px;">${reimbursement.event}</td></tr>
+              <tr><td style="padding:8px;font-weight:bold;background:#f3f4f6;">Committee</td><td style="padding:8px;">${reimbursement.committee}</td></tr>
+              <tr><td style="padding:8px;font-weight:bold;background:#f3f4f6;">Amount</td><td style="padding:8px;">₹${reimbursement.amount.toFixed(2)}</td></tr>
+              <tr><td style="padding:8px;font-weight:bold;background:#f3f4f6;">Submitted By</td><td style="padding:8px;">${reimbursement.user.name} (${reimbursement.user.email})</td></tr>
+            </table>
+
+            ${remark ? `
+            <div style="background:#f3f4f6;border-left:4px solid #3b82f6;padding:12px 16px;margin:16px 0;">
+              <p style="margin:0;font-weight:bold;">User Response Remark:</p>
+              <p style="margin:8px 0 0;">${remark.trim()}</p>
+            </div>
+            ` : ""}
+
+            <p>Please log in to the dashboard to review and approve/reject the claim.</p>
+            <p style="color:#9CA3AF;font-size:12px;">This is an automated notification from the Reimbursement Platform.</p>
+          `,
+        });
+      } catch (mailError) {
+        console.warn(`Could not send resubmission email to admin ${admin.email}:`, mailError.message);
+      }
+    }
+
+    res.status(200).json({
+      message: "Reimbursement resubmitted successfully",
+      reimbursement: updated,
+    });
+  } catch (error) {
+    console.error("Resubmit reimbursement error:", error);
+    res.status(500).json({ message: "Internal Server Error" });
+  }
+}
+
 module.exports = {
   createReimbursement,
   getMyReimbursements,
   getReimbursementDetails,
   cancelReimbursement,
   getActivityLog,
+  resubmitReimbursement,
 };

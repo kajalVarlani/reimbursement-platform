@@ -7,6 +7,7 @@ const {
   getReimbursementDetails,
   cancelReimbursement,
   getActivityLog,
+  resubmitReimbursement,
 } = require("../controllers/reimbursementController");
 const { attachBill, detachBill, getBills } = require("../controllers/billController");
 
@@ -19,6 +20,7 @@ router.post("/", createReimbursement);
 router.get("/", getMyReimbursements);
 router.get("/:id", getReimbursementDetails);
 router.post("/:id/cancel", cancelReimbursement);
+router.post("/:id/resubmit", resubmitReimbursement);
 
 // ── Activity log ────────────────────────────────────────────────────────────
 router.get("/:id/activity", getActivityLog);
