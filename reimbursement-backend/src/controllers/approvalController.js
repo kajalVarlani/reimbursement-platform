@@ -15,13 +15,25 @@ function adminActorRole(admin) {
 async function getVisibleReimbursements(req, res) {
   try {
     const admin = req.admin;
+    const { status, page, limit } = req.query;
+
+    const pageInt = parseInt(page, 10) || 1;
+    const limitInt = parseInt(limit, 10) || 20;
+    const skip = (pageInt - 1) * limitInt;
+    const take = limitInt;
 
     // Super Admin gets global audit access (all reimbursements)
     if (admin.role === "SUPER_ADMIN") {
-      const { status } = req.query;
+      const VALID_STATUSES = ["PENDING", "APPROVED", "REJECTED", "QUERY_RAISED", "CANCELLED"];
+      if (status && !VALID_STATUSES.includes(status)) {
+        return res.status(400).json({ message: `Invalid status filter value: ${status}` });
+      }
+
       const where = status ? { status } : {};
       const reimbursements = await prisma.reimbursement.findMany({
         where,
+        skip,
+        take,
         include: {
           user: {
             select: { id: true, name: true, email: true },
@@ -43,7 +55,16 @@ async function getVisibleReimbursements(req, res) {
         },
         orderBy: { createdAt: "desc" },
       });
-      return res.status(200).json(reimbursements);
+
+      const formatReimbursement = (r) => {
+        const firstBill = r.bills?.[0]?.bill;
+        return {
+          ...r,
+          receiptUrl: firstBill ? firstBill.receiptUrl : null,
+        };
+      };
+
+      return res.status(200).json(reimbursements.map(formatReimbursement));
     }
 
     // Check if the administrator is assigned a position and priority
@@ -60,6 +81,8 @@ async function getVisibleReimbursements(req, res) {
         status: { in: ["PENDING", "QUERY_RAISED"] },
         currentPriority: priority,
       },
+      skip,
+      take,
       include: {
         user: {
           select: { id: true, name: true, email: true },
@@ -76,7 +99,15 @@ async function getVisibleReimbursements(req, res) {
       orderBy: { createdAt: "desc" },
     });
 
-    res.status(200).json(reimbursements);
+    const formatReimbursement = (r) => {
+      const firstBill = r.bills?.[0]?.bill;
+      return {
+        ...r,
+        receiptUrl: firstBill ? firstBill.receiptUrl : null,
+      };
+    };
+
+    res.status(200).json(reimbursements.map(formatReimbursement));
   } catch (error) {
     console.error("Get visible reimbursements error:", error);
     res.status(500).json({ message: "Internal Server Error" });
@@ -453,12 +484,18 @@ async function raiseQuery(req, res) {
 async function getApprovalHistory(req, res) {
   try {
     const admin = req.admin;
+    const page = parseInt(req.query.page, 10) || 1;
+    const limit = parseInt(req.query.limit, 10) || 20;
+    const skip = (page - 1) * limit;
+    const take = limit;
 
     const approvals = await prisma.reimbursementApproval.findMany({
       where: {
         administratorId: admin.id,
         status: { not: "PENDING" },
       },
+      skip,
+      take,
       include: {
         reimbursement: {
           include: {
@@ -476,7 +513,19 @@ async function getApprovalHistory(req, res) {
       orderBy: { actedAt: "desc" },
     });
 
-    res.status(200).json(approvals);
+    const formatApproval = (app) => {
+      if (!app.reimbursement) return app;
+      const firstBill = app.reimbursement.bills?.[0]?.bill;
+      return {
+        ...app,
+        reimbursement: {
+          ...app.reimbursement,
+          receiptUrl: firstBill ? firstBill.receiptUrl : null,
+        },
+      };
+    };
+
+    res.status(200).json(approvals.map(formatApproval));
   } catch (error) {
     console.error("Get approval history error:", error);
     res.status(500).json({ message: "Internal Server Error" });

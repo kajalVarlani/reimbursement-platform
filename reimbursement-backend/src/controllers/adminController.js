@@ -54,7 +54,14 @@ async function createUser(req, res) {
 
 async function listUsers(req, res) {
   try {
+    const page = parseInt(req.query.page, 10) || 1;
+    const limit = parseInt(req.query.limit, 10) || 20;
+    const skip = (page - 1) * limit;
+    const take = limit;
+
     const users = await prisma.user.findMany({
+      skip,
+      take,
       orderBy: { createdAt: "desc" },
       select: {
         id: true,
@@ -160,7 +167,14 @@ async function createAdmin(req, res) {
 
 async function listAdmins(req, res) {
   try {
+    const page = parseInt(req.query.page, 10) || 1;
+    const limit = parseInt(req.query.limit, 10) || 20;
+    const skip = (page - 1) * limit;
+    const take = limit;
+
     const admins = await prisma.administrator.findMany({
+      skip,
+      take,
       orderBy: { createdAt: "desc" },
       select: {
         id: true,
@@ -357,10 +371,23 @@ async function listAllReimbursements(req, res) {
   try {
     // Optional filter: ?status=PENDING|APPROVED|REJECTED|QUERY_RAISED|CANCELLED
     const { status } = req.query;
+
+    const VALID_STATUSES = ["PENDING", "APPROVED", "REJECTED", "QUERY_RAISED", "CANCELLED"];
+    if (status && !VALID_STATUSES.includes(status)) {
+      return res.status(400).json({ message: `Invalid status filter value: ${status}` });
+    }
+
     const where = status ? { status } : {};
+
+    const page = parseInt(req.query.page, 10) || 1;
+    const limit = parseInt(req.query.limit, 10) || 20;
+    const skip = (page - 1) * limit;
+    const take = limit;
 
     const reimbursements = await prisma.reimbursement.findMany({
       where,
+      skip,
+      take,
       include: {
         user: {
           select: { id: true, name: true, email: true },
@@ -385,7 +412,16 @@ async function listAllReimbursements(req, res) {
       orderBy: { createdAt: "desc" },
     });
 
-    res.status(200).json(reimbursements);
+    // Map bills[0].bill.receiptUrl to reimbursement.receiptUrl for frontend compatibility
+    const formatReimbursement = (r) => {
+      const firstBill = r.bills?.[0]?.bill;
+      return {
+        ...r,
+        receiptUrl: firstBill ? firstBill.receiptUrl : null,
+      };
+    };
+
+    res.status(200).json(reimbursements.map(formatReimbursement));
   } catch (error) {
     console.error("List all reimbursements error:", error);
     res.status(500).json({ message: "Internal Server Error" });

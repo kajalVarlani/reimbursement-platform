@@ -103,6 +103,24 @@ async function createReimbursement(req, res) {
         },
       });
 
+      // Create a Bill record for this reimbursement receipt
+      const bill = await tx.bill.create({
+        data: {
+          amount: amountFloat,
+          receiptUrl,
+          uniqueIdentifier: `uniq:${crypto.randomUUID()}`,
+        },
+      });
+
+      // Attach the bill to the reimbursement
+      await tx.reimbursementBill.create({
+        data: {
+          reimbursementId: r.id,
+          billId: bill.id,
+          allocatedAmount: amountFloat,
+        },
+      });
+
       // Find administrators at the lowest priority
       const admins = await tx.administrator.findMany({
         where: { position: { priority: lowestPosition.priority } },
@@ -138,7 +156,10 @@ async function createReimbursement(req, res) {
 
     res.status(201).json({
       message: "Reimbursement submitted successfully",
-      reimbursement,
+      reimbursement: {
+        ...reimbursement,
+        receiptUrl,
+      },
     });
   } catch (error) {
     console.error("Create reimbursement error:", error);
@@ -146,10 +167,27 @@ async function createReimbursement(req, res) {
   }
 }
 
+// Helper to map receiptUrl for frontend compatibility
+const formatReimbursement = (r) => {
+  if (!r) return null;
+  const firstBill = r.bills?.[0]?.bill;
+  return {
+    ...r,
+    receiptUrl: firstBill ? firstBill.receiptUrl : null,
+  };
+};
+
 async function getMyReimbursements(req, res) {
   try {
+    const page = parseInt(req.query.page, 10) || 1;
+    const limit = parseInt(req.query.limit, 10) || 20;
+    const skip = (page - 1) * limit;
+    const take = limit;
+
     const reimbursements = await prisma.reimbursement.findMany({
       where: { userId: req.user.id },
+      skip,
+      take,
       orderBy: { createdAt: "desc" },
       include: {
         approvals: {
@@ -172,7 +210,7 @@ async function getMyReimbursements(req, res) {
       },
     });
 
-    res.status(200).json(reimbursements);
+    res.status(200).json(reimbursements.map(formatReimbursement));
   } catch (error) {
     console.error("Get my reimbursements error:", error);
     res.status(500).json({ message: "Internal Server Error" });
@@ -219,7 +257,7 @@ async function getReimbursementDetails(req, res) {
       });
     }
 
-    res.status(200).json(reimbursement);
+    res.status(200).json(formatReimbursement(reimbursement));
   } catch (error) {
     console.error("Get reimbursement details error:", error);
     res.status(500).json({ message: "Internal Server Error" });
