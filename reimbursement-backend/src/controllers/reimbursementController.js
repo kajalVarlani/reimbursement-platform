@@ -74,6 +74,16 @@ async function createReimbursement(req, res) {
     // Use Prisma transaction to create reimbursement and its initial approval tracking rows
 
     const reimbursement = await prisma.$transaction(async (tx) => {
+      // Resolve the lowest-priority position dynamically so the claim is routed
+      // correctly even if the hierarchy doesn’t start at 1.
+      const lowestPosition = await tx.position.findFirst({
+        orderBy: { priority: "asc" },
+      });
+
+      if (!lowestPosition) {
+        throw new Error("No approval positions configured. Cannot submit reimbursement.");
+      }
+
       // Create reimbursement
       const r = await tx.reimbursement.create({
         data: {
@@ -82,14 +92,14 @@ async function createReimbursement(req, res) {
           amount: amountFloat,
           description,
           status: "PENDING",
-          currentPriority: 1,
+          currentPriority: lowestPosition.priority,
           userId: req.user.id,
         },
       });
 
-      // Find administrators at priority 1
+      // Find administrators at the lowest priority
       const admins = await tx.administrator.findMany({
-        where: { position: { priority: 1 } },
+        where: { position: { priority: lowestPosition.priority } },
       });
 
       // Create approval stubs
@@ -98,7 +108,7 @@ async function createReimbursement(req, res) {
           data: admins.map((admin) => ({
             reimbursementId: r.id,
             administratorId: admin.id,
-            priority: 1,
+            priority: lowestPosition.priority,
             status: "PENDING",
           })),
         });
