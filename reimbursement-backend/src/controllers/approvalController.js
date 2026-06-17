@@ -10,6 +10,80 @@ function adminActorRole(admin) {
   return admin.position ? admin.position.name : "ADMINISTRATOR";
 }
 
+/** Inject duplicate bill/metadata details for standard/super admins */
+async function injectDuplicateInfo(reimbursements, admin) {
+  if (!reimbursements || reimbursements.length === 0) return reimbursements;
+
+  const billIds = [];
+  for (const r of reimbursements) {
+    if (r.bills) {
+      for (const rb of r.bills) {
+        if (rb.billId && !billIds.includes(rb.billId)) {
+          billIds.push(rb.billId);
+        }
+      }
+    }
+  }
+
+  if (billIds.length === 0) return reimbursements;
+
+  const allRelatedBills = await prisma.reimbursementBill.findMany({
+    where: { billId: { in: billIds } },
+    include: {
+      reimbursement: {
+        include: {
+          user: {
+            select: { id: true, name: true, email: true },
+          },
+        },
+      },
+    },
+  });
+
+  const currentPriority = admin.role === "SUPER_ADMIN" ? null : admin.position?.priority;
+
+  for (const r of reimbursements) {
+    if (!r.bills) continue;
+    for (const rb of r.bills) {
+      const conflicts = [];
+      const matches = allRelatedBills.filter(
+        (b) => b.billId === rb.billId && b.reimbursementId !== r.id
+      );
+
+      for (const match of matches) {
+        const otherReim = match.reimbursement;
+        if (!otherReim) continue;
+
+        let isUnderSameApprovalRightNow = false;
+        if (admin.role === "SUPER_ADMIN") {
+          isUnderSameApprovalRightNow = ["PENDING", "QUERY_RAISED"].includes(otherReim.status);
+        } else if (currentPriority !== null && currentPriority !== undefined) {
+          isUnderSameApprovalRightNow =
+            otherReim.currentPriority === currentPriority &&
+            ["PENDING", "QUERY_RAISED"].includes(otherReim.status);
+        }
+
+        conflicts.push({
+          reimbursementId: otherReim.id,
+          event: otherReim.event,
+          committee: otherReim.committee,
+          amount: otherReim.amount,
+          status: otherReim.status,
+          currentPriority: otherReim.currentPriority,
+          isPaid: otherReim.isPaid,
+          user: otherReim.user,
+          allocatedAmount: match.allocatedAmount,
+          isUnderSameApprovalRightNow,
+        });
+      }
+
+      rb.conflicts = conflicts;
+    }
+  }
+
+  return reimbursements;
+}
+
 // ─── Controllers ──────────────────────────────────────────────────────────────
 
 async function getVisibleReimbursements(req, res) {
@@ -64,7 +138,8 @@ async function getVisibleReimbursements(req, res) {
         };
       };
 
-      return res.status(200).json(reimbursements.map(formatReimbursement));
+      const enriched = await injectDuplicateInfo(reimbursements, admin);
+      return res.status(200).json(enriched.map(formatReimbursement));
     }
 
     // Check if the administrator is assigned a position and priority
@@ -78,8 +153,15 @@ async function getVisibleReimbursements(req, res) {
 
     const reimbursements = await prisma.reimbursement.findMany({
       where: {
-        status: { in: ["PENDING", "QUERY_RAISED"] },
+        status: "PENDING",
         currentPriority: priority,
+        approvals: {
+          none: {
+            administratorId: admin.id,
+            priority: priority,
+            status: "APPROVED",
+          },
+        },
       },
       skip,
       take,
@@ -107,7 +189,8 @@ async function getVisibleReimbursements(req, res) {
       };
     };
 
-    res.status(200).json(reimbursements.map(formatReimbursement));
+    const enriched = await injectDuplicateInfo(reimbursements, admin);
+    res.status(200).json(enriched.map(formatReimbursement));
   } catch (error) {
     console.error("Get visible reimbursements error:", error);
     res.status(500).json({ message: "Internal Server Error" });

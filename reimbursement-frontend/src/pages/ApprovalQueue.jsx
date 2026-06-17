@@ -342,7 +342,16 @@ function ApprovalQueue() {
                       </td>
                       <td className="cell-bold">{claim.user?.name || '—'}</td>
                       <td>{claim.committee}</td>
-                      <td>{claim.event}</td>
+                      <td>
+                        <div style={{ display: 'flex', flexDirection: 'column' }}>
+                          <span>{claim.event}</span>
+                          {claim.bills?.some((rb) => rb.conflicts?.some((c) => c.isUnderSameApprovalRightNow)) && (
+                            <span className="duplicate-badge-table" title="At least one bill in this claim is also attached to another claim under active approval">
+                              ⚠️ Duplicate Bill
+                            </span>
+                          )}
+                        </div>
+                      </td>
                       <td className="cell-amount">₹{claim.amount.toLocaleString('en-IN')}</td>
                       <td>
                         {isSuperAdmin ? (
@@ -597,8 +606,18 @@ function ApprovalQueue() {
                     {selectedClaim.bills.map((rb, idx) => {
                       const b = rb.bill;
                       if (!b) return null;
+                      const hasSameLevelDuplicate = rb.conflicts?.some((c) => c.isUnderSameApprovalRightNow);
                       return (
-                        <div key={b.id || idx} style={{ border: '1px solid var(--wc-100)', borderRadius: '10px', padding: '16px', background: 'var(--card-bg-subtle, #f9fafb)' }}>
+                        <div
+                          key={b.id || idx}
+                          style={{
+                            border: hasSameLevelDuplicate ? '2px solid rgba(220, 75, 75, 0.45)' : '1px solid var(--wc-100)',
+                            borderRadius: '10px',
+                            padding: '16px',
+                            background: hasSameLevelDuplicate ? 'rgba(220, 75, 75, 0.01)' : 'var(--card-bg-subtle, #f9fafb)',
+                            boxShadow: hasSameLevelDuplicate ? '0 0 8px rgba(220, 75, 75, 0.05)' : 'none',
+                          }}
+                        >
                           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px', borderBottom: '1px dashed var(--wc-100)', paddingBottom: '8px' }}>
                             <span style={{ fontWeight: 600, fontSize: '14.5px' }}>Bill #{idx + 1}</span>
                             <div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
@@ -668,6 +687,37 @@ function ApprovalQueue() {
                               <span style={{ color: 'var(--text-muted)', fontSize: '12px' }}>No receipt document uploaded</span>
                             )}
                           </div>
+
+                          {rb.conflicts && rb.conflicts.length > 0 && (
+                            <div className="bill-conflict-box">
+                              <div className="conflict-header">
+                                <span>⚠️ Duplicate Bill Detected</span>
+                              </div>
+                              <div className="conflict-body">
+                                <p style={{ fontSize: '13px', marginBottom: '8px', fontWeight: 600 }}>
+                                  This bill is shared with {rb.conflicts.length} other claim{rb.conflicts.length > 1 ? 's' : ''}:
+                                </p>
+                                <ul className="conflict-list" style={{ paddingLeft: '18px', listStyleType: 'disc' }}>
+                                  {rb.conflicts.map((c, cIdx) => (
+                                    <li key={c.reimbursementId || cIdx} className="conflict-item" style={{ marginBottom: '6px' }}>
+                                      <strong>{c.committee} &mdash; {c.event}</strong> (₹{c.amount.toLocaleString('en-IN')})
+                                      <br />
+                                      <span style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>
+                                        Submitted by: {c.user?.name || '—'} ({c.user?.email || '—'})
+                                      </span>
+                                      <br />
+                                      <span style={{ fontSize: '12px', display: 'flex', alignItems: 'center', gap: '6px', marginTop: '2px' }}>
+                                        Status: <span className={`conflict-status ${c.status.toLowerCase().replace('_', '-')}`}>{STATUS_LABELS[c.status] || c.status}</span>
+                                        {c.isUnderSameApprovalRightNow && (
+                                          <span className="same-level-flag">Awaiting your approval</span>
+                                        )}
+                                      </span>
+                                    </li>
+                                  ))}
+                                </ul>
+                              </div>
+                            </div>
+                          )}
                         </div>
                       );
                     })}
