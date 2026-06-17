@@ -34,54 +34,103 @@ const uploadToCloudinary = (fileBuffer, mimetype) => {
 
 async function createReimbursement(req, res) {
   try {
-    const { committee, event, amount, description } = req.body;
+    const { committee, event, description } = req.body;
 
-    if (!committee || !event || !amount) {
+    if (!committee || !event) {
       return res.status(400).json({
-        message: "Committee, event, and amount are required",
+        message: "Committee and event are required",
       });
     }
 
-    const amountFloat = parseFloat(amount);
-    if (isNaN(amountFloat)) {
-      return res.status(400).json({
-        message: "Amount must be a number",
-      });
-    }
-
-    if (amountFloat <= 0) {
-      return res.status(400).json({
-        message: "Amount must be greater than zero",
-      });
-    }
-
-
-    // Upload to Cloudinary
-    if (!req.file) {
-      return res.status(400).json({ message: "Receipt is required" });
-    }
-
-    let receiptUrl;
-    if (!process.env.CLOUDINARY_API_KEY || !process.env.CLOUDINARY_CLOUD_NAME) {
-      console.warn("Cloudinary not configured. Using fallback mock receipt URL.");
-      receiptUrl = "https://res.cloudinary.com/demo/image/upload/v1580976523/sample.jpg";
-    } else {
+    let bills = [];
+    if (typeof req.body.bills === "string") {
       try {
-        const uploadResult = await uploadToCloudinary(req.file.buffer, req.file.mimetype);
-        receiptUrl = uploadResult.secure_url;
-      } catch (uploadError) {
-        console.error("Cloudinary upload failed:", uploadError);
-        return res.status(500).json({
-          message: "Failed to upload receipt image to Cloudinary",
+        bills = JSON.parse(req.body.bills);
+      } catch (err) {
+        return res.status(400).json({
+          message: "Invalid bills data format. Must be JSON.",
         });
       }
+    } else if (Array.isArray(req.body.bills)) {
+      bills = req.body.bills;
     }
 
-    // Use Prisma transaction to create reimbursement and its initial approval tracking rows
+    if (!bills || bills.length === 0) {
+      return res.status(400).json({
+        message: "At least one bill is required to submit a reimbursement claim",
+      });
+    }
 
+    // Validate that number of uploaded files matches number of bills
+    if (!req.files || req.files.length !== bills.length) {
+      return res.status(400).json({
+        message: `Number of uploaded receipts (${req.files ? req.files.length : 0}) does not match number of bills (${bills.length})`,
+      });
+    }
+
+    // Validate each bill metadata & calculate total amount
+    let totalClaimedAmount = 0;
+    const validatedBills = [];
+
+    for (let i = 0; i < bills.length; i++) {
+      const bill = bills[i];
+      const amountFloat = parseFloat(bill.amount);
+      const allocatedFloat = parseFloat(bill.allocatedAmount);
+
+      if (isNaN(amountFloat) || amountFloat <= 0) {
+        return res.status(400).json({
+          message: `Bill #${i + 1} must have a valid total amount greater than zero`,
+        });
+      }
+
+      if (isNaN(allocatedFloat) || allocatedFloat <= 0) {
+        return res.status(400).json({
+          message: `Bill #${i + 1} must have a valid claimed amount greater than zero`,
+        });
+      }
+
+      if (allocatedFloat > amountFloat) {
+        return res.status(400).json({
+          message: `Bill #${i + 1} claimed amount (₹${allocatedFloat}) cannot exceed the total bill amount (₹${amountFloat})`,
+        });
+      }
+
+      totalClaimedAmount += allocatedFloat;
+
+      validatedBills.push({
+        ...bill,
+        amount: amountFloat,
+        allocatedAmount: allocatedFloat,
+      });
+    }
+
+    // Upload files to Cloudinary in parallel
+    const uploadPromises = req.files.map((file) => {
+      if (!process.env.CLOUDINARY_API_KEY || !process.env.CLOUDINARY_CLOUD_NAME) {
+        console.warn("Cloudinary not configured. Using fallback mock receipt URL.");
+        return Promise.resolve({ secure_url: "https://res.cloudinary.com/demo/image/upload/v1580976523/sample.jpg" });
+      }
+      return uploadToCloudinary(file.buffer, file.mimetype);
+    });
+
+    let uploadResults;
+    try {
+      uploadResults = await Promise.all(uploadPromises);
+    } catch (uploadError) {
+      console.error("Cloudinary upload failed:", uploadError);
+      return res.status(500).json({
+        message: "Failed to upload one or more receipts to Cloudinary",
+      });
+    }
+
+    // Map Cloudinary urls to validated bills
+    const billsWithUrls = validatedBills.map((bill, index) => ({
+      ...bill,
+      receiptUrl: uploadResults[index].secure_url,
+    }));
+
+    // Use Prisma transaction to create reimbursement, bills, connections, and approval trail
     const reimbursement = await prisma.$transaction(async (tx) => {
-      // Resolve the lowest-priority position dynamically so the claim is routed
-      // correctly even if the hierarchy doesn’t start at 1.
       const lowestPosition = await tx.position.findFirst({
         orderBy: { priority: "asc" },
       });
@@ -95,7 +144,7 @@ async function createReimbursement(req, res) {
         data: {
           committee,
           event,
-          amount: amountFloat,
+          amount: totalClaimedAmount,
           description,
           status: "PENDING",
           currentPriority: lowestPosition.priority,
@@ -103,23 +152,41 @@ async function createReimbursement(req, res) {
         },
       });
 
-      // Create a Bill record for this reimbursement receipt
-      const bill = await tx.bill.create({
-        data: {
-          amount: amountFloat,
-          receiptUrl,
-          uniqueIdentifier: `uniq:${crypto.randomUUID()}`,
-        },
-      });
+      // Create and connect each bill
+      for (const billData of billsWithUrls) {
+        // Build unique identifier to prevent duplicate Bill records
+        const uniqueIdentifier = billData.transactionId && billData.transactionId.trim() !== ""
+          ? `txn:${billData.transactionId.trim()}`
+          : (billData.vendorName && billData.vendorName.trim() !== "") || (billData.invoiceNumber && billData.invoiceNumber.trim() !== "")
+            ? `inv:${(billData.vendorName || "").trim().toLowerCase()}|${(billData.invoiceNumber || "").trim().toLowerCase()}|${billData.billDate ? new Date(billData.billDate).toISOString().slice(0, 10) : ""}|${billData.amount}`
+            : `uniq:${crypto.randomUUID()}`;
 
-      // Attach the bill to the reimbursement
-      await tx.reimbursementBill.create({
-        data: {
-          reimbursementId: r.id,
-          billId: bill.id,
-          allocatedAmount: amountFloat,
-        },
-      });
+        // Find existing or create new bill
+        let bill = await tx.bill.findUnique({ where: { uniqueIdentifier } });
+
+        if (!bill) {
+          bill = await tx.bill.create({
+            data: {
+              vendorName: billData.vendorName || null,
+              invoiceNumber: billData.invoiceNumber || null,
+              transactionId: billData.transactionId || null,
+              billDate: billData.billDate ? new Date(billData.billDate) : null,
+              amount: billData.amount,
+              receiptUrl: billData.receiptUrl,
+              uniqueIdentifier,
+            },
+          });
+        }
+
+        // Attach the bill to the reimbursement
+        await tx.reimbursementBill.create({
+          data: {
+            reimbursementId: r.id,
+            billId: bill.id,
+            allocatedAmount: billData.allocatedAmount,
+          },
+        });
+      }
 
       // Find administrators at the lowest priority
       const admins = await tx.administrator.findMany({
@@ -143,7 +210,7 @@ async function createReimbursement(req, res) {
         {
           reimbursementId: r.id,
           action: "SUBMITTED",
-          activity: `Reimbursement submitted for ₹${amountFloat.toFixed(2)}`,
+          activity: `Reimbursement submitted for ₹${totalClaimedAmount.toFixed(2)} with ${billsWithUrls.length} bill(s)`,
           actorType: "USER",
           userId: req.user.id,
           actorRole: "USER",
@@ -158,7 +225,7 @@ async function createReimbursement(req, res) {
       message: "Reimbursement submitted successfully",
       reimbursement: {
         ...reimbursement,
-        receiptUrl,
+        receiptUrl: billsWithUrls[0].receiptUrl, // preserve receiptUrl of first bill for simple list compatibility
       },
     });
   } catch (error) {

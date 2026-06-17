@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback } from 'react';
 import { useDispatch, useSelector } from 'react-redux';
 import { useNavigate } from 'react-router-dom';
 import { logout } from '../store/authSlice';
-import { getApprovalHistory } from '../services/adminService';
+import { getApprovalHistory, getApprovalActivityLog } from '../services/adminService';
 import {
   HiOutlineClock,
   HiOutlineCheckCircle,
@@ -11,6 +11,7 @@ import {
   HiOutlineX,
   HiOutlineRefresh,
   HiOutlineArrowLeft,
+  HiOutlineClipboardList,
 } from 'react-icons/hi';
 import { TbFileInvoice, TbShieldCheck } from 'react-icons/tb';
 import toast, { Toaster } from 'react-hot-toast';
@@ -24,6 +25,19 @@ function ApprovalHistory() {
   const [history, setHistory] = useState([]);
   const [loading, setLoading] = useState(true);
   const [selectedClaim, setSelectedClaim] = useState(null);
+  const [activityModal, setActivityModal] = useState({ open: false, logs: [], loading: false });
+
+  const openActivityLog = async (claimId) => {
+    setActivityModal({ open: true, logs: [], loading: true });
+    setSelectedClaim(null);
+    try {
+      const logs = await getApprovalActivityLog(claimId);
+      setActivityModal({ open: true, logs, loading: false });
+    } catch (err) {
+      toast.error(err.response?.data?.message || 'Failed to load activity log.');
+      setActivityModal((p) => ({ ...p, loading: false }));
+    }
+  };
 
   const fetchHistory = useCallback(async () => {
     setLoading(true);
@@ -222,14 +236,24 @@ function ApprovalHistory() {
                           {record.remark || <span style={{ color: 'var(--text-muted)', fontStyle: 'italic' }}>No remark</span>}
                         </td>
                         <td style={{ textAlign: 'right' }}>
-                          <button
-                            className="btn-action-icon"
-                            onClick={() => setSelectedClaim(claim)}
-                            title="View Details"
-                            id={`btn-view-${record.id}`}
-                          >
-                            <HiOutlineEye />
-                          </button>
+                          <div className="action-btn-group">
+                            <button
+                              className="btn-action-icon"
+                              onClick={() => setSelectedClaim(claim)}
+                              title="View Details"
+                              id={`btn-view-${record.id}`}
+                            >
+                              <HiOutlineEye />
+                            </button>
+                            <button
+                              className="btn-action-icon"
+                              onClick={() => claim && openActivityLog(claim.id)}
+                              title="Activity Log"
+                              id={`btn-activity-${record.id}`}
+                            >
+                              <HiOutlineClipboardList />
+                            </button>
+                          </div>
                         </td>
                       </tr>
                     );
@@ -333,41 +357,171 @@ function ApprovalHistory() {
                 </div>
               )}
 
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                <span className="detail-label">Receipt Document / Image</span>
-                {selectedClaim.receiptUrl ? (
-                  selectedClaim.receiptUrl.toLowerCase().includes('.pdf') ? (
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-                      <iframe
-                        src={selectedClaim.receiptUrl}
-                        title="Receipt PDF"
-                        style={{ width: '100%', height: '350px', border: '1px solid var(--wc-100)', borderRadius: '6px' }}
-                      />
-                      <a
-                        href={selectedClaim.receiptUrl}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="btn-secondary"
-                        style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: '6px', padding: '8px 16px', textDecoration: 'none', textAlign: 'center', fontSize: '13px' }}
-                      >
-                        Open PDF in New Tab
-                      </a>
-                    </div>
-                  ) : (
-                    <a href={selectedClaim.receiptUrl} target="_blank" rel="noopener noreferrer">
-                      <img
-                        src={selectedClaim.receiptUrl}
-                        alt="Receipt"
-                        className="receipt-image-preview"
-                      />
-                    </a>
-                  )
-                ) : (
-                  <span className="detail-value" style={{ color: 'var(--text-muted)' }}>
-                    No receipt uploaded
+              {selectedClaim.bills && selectedClaim.bills.length > 0 ? (
+                <div style={{ marginTop: '20px' }}>
+                  <span className="detail-label" style={{ display: 'block', marginBottom: '12px' }}>
+                    Attached Bills &amp; Receipts ({selectedClaim.bills.length})
                   </span>
-                )}
-              </div>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+                    {selectedClaim.bills.map((rb, idx) => {
+                      const b = rb.bill;
+                      if (!b) return null;
+                      return (
+                        <div key={b.id || idx} style={{ border: '1px solid var(--wc-100)', borderRadius: '10px', padding: '16px', background: 'var(--card-bg-subtle, #f9fafb)' }}>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px', borderBottom: '1px dashed var(--wc-100)', paddingBottom: '8px' }}>
+                            <span style={{ fontWeight: 600, fontSize: '14.5px' }}>Bill #{idx + 1}</span>
+                            <div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
+                              <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>
+                                Total: <span style={{ fontWeight: 600 }}>₹{b.amount.toLocaleString('en-IN')}</span>
+                              </span>
+                              <span style={{ fontWeight: 700, color: 'var(--primary)', fontSize: '14.5px' }}>
+                                Claimed: ₹{rb.allocatedAmount.toLocaleString('en-IN')}
+                              </span>
+                            </div>
+                          </div>
+                          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(130px, 1fr))', gap: '8px 12px', fontSize: '13px', marginBottom: '12px' }}>
+                            {b.vendorName && (
+                              <div>
+                                <span style={{ color: 'var(--text-muted)', display: 'block', fontSize: '11px' }}>Vendor</span>
+                                <span style={{ fontWeight: 500 }}>{b.vendorName}</span>
+                              </div>
+                            )}
+                            {b.invoiceNumber && (
+                              <div>
+                                <span style={{ color: 'var(--text-muted)', display: 'block', fontSize: '11px' }}>Invoice No.</span>
+                                <span style={{ fontWeight: 500 }}>{b.invoiceNumber}</span>
+                              </div>
+                            )}
+                            {b.transactionId && (
+                              <div>
+                                <span style={{ color: 'var(--text-muted)', display: 'block', fontSize: '11px' }}>Transaction ID</span>
+                                <span style={{ fontWeight: 500 }}>{b.transactionId}</span>
+                              </div>
+                            )}
+                            {b.billDate && (
+                              <div>
+                                <span style={{ color: 'var(--text-muted)', display: 'block', fontSize: '11px' }}>Bill Date</span>
+                                <span style={{ fontWeight: 500 }}>{new Date(b.billDate).toLocaleDateString('en-IN')}</span>
+                              </div>
+                            )}
+                          </div>
+                          <div>
+                            {b.receiptUrl ? (
+                              b.receiptUrl.toLowerCase().includes('.pdf') ? (
+                                <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                                  <iframe
+                                    src={b.receiptUrl}
+                                    title={`Receipt PDF ${idx + 1}`}
+                                    style={{ width: '100%', height: '220px', border: '1px solid var(--wc-100)', borderRadius: '6px' }}
+                                  />
+                                  <a
+                                    href={b.receiptUrl}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    className="btn-secondary"
+                                    style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: '6px', padding: '6px 12px', textDecoration: 'none', textAlign: 'center', fontSize: '12px', width: 'fit-content' }}
+                                  >
+                                    Open PDF in New Tab
+                                  </a>
+                                </div>
+                              ) : (
+                                <a href={b.receiptUrl} target="_blank" rel="noopener noreferrer">
+                                  <img
+                                    src={b.receiptUrl}
+                                    alt={`Bill ${idx + 1} Receipt`}
+                                    style={{ maxWidth: '100%', maxHeight: '220px', borderRadius: '6px', objectFit: 'contain', display: 'block', border: '1px solid var(--wc-100)' }}
+                                  />
+                                </a>
+                              )
+                            ) : (
+                              <span style={{ color: 'var(--text-muted)', fontSize: '12px' }}>No receipt document uploaded</span>
+                            )}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              ) : (
+                <div className="detail-row" style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                  <span className="detail-label">Receipt Document / Image</span>
+                  {selectedClaim.receiptUrl ? (
+                    selectedClaim.receiptUrl.toLowerCase().includes('.pdf') ? (
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', width: '100%' }}>
+                        <iframe
+                          src={selectedClaim.receiptUrl}
+                          title="Receipt PDF"
+                          style={{ width: '100%', height: '350px', border: '1px solid var(--wc-100)', borderRadius: '6px' }}
+                        />
+                        <a
+                          href={selectedClaim.receiptUrl}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="btn-secondary"
+                          style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: '6px', padding: '8px 16px', textDecoration: 'none', textAlign: 'center', fontSize: '13px' }}
+                        >
+                          Open PDF in New Tab
+                        </a>
+                      </div>
+                    ) : (
+                      <a href={selectedClaim.receiptUrl} target="_blank" rel="noopener noreferrer">
+                        <img
+                          src={selectedClaim.receiptUrl}
+                          alt="Receipt Scan"
+                          className="receipt-image-preview"
+                        />
+                      </a>
+                    )
+                  ) : (
+                    <span className="detail-value text-muted">No scan available</span>
+                  )}
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Activity Log Modal ── */}
+      {activityModal.open && (
+        <div className="details-modal-overlay" onClick={() => setActivityModal({ open: false, logs: [], loading: false })}>
+          <div className="details-modal-card" onClick={(e) => e.stopPropagation()}>
+            <div className="modal-header">
+              <h3 className="modal-title">Activity Log</h3>
+              <button className="modal-close-btn" onClick={() => setActivityModal({ open: false, logs: [], loading: false })}>
+                <HiOutlineX />
+              </button>
+            </div>
+            <div className="modal-body">
+              {activityModal.loading ? (
+                <div style={{ padding: '40px', display: 'flex', justifyContent: 'center' }}>
+                  <div className="btn-spinner" style={{ width: '36px', height: '36px', border: '3px solid rgba(79,124,130,0.2)', borderTopColor: 'var(--wc-300)' }} />
+                </div>
+              ) : activityModal.logs.length === 0 ? (
+                <p style={{ color: 'var(--text-muted)', fontSize: '14px', textAlign: 'center', padding: '32px 0' }}>
+                  No activity recorded yet.
+                </p>
+              ) : (
+                <div className="activity-timeline">
+                  {activityModal.logs.map((log) => (
+                    <div key={log.id} className="activity-item">
+                      <div className="activity-dot" />
+                      <div className="activity-content">
+                        <div className="activity-action">{log.action.replace(/_/g, ' ')}</div>
+                        <div className="activity-text">{log.activity}</div>
+                        <div className="activity-meta">
+                          <span className="activity-actor">
+                            {log.actorRole} — {log.user?.name || log.administrator?.name || 'System'}
+                          </span>
+                          <span className="activity-time">
+                            {new Date(log.createdAt).toLocaleString('en-IN')}
+                          </span>
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
           </div>
         </div>

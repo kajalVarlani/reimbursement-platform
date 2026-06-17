@@ -2,8 +2,11 @@ import api from './api';
 
 // ── Approval Queue (ADMINISTRATOR role) ──
 
-export const getApprovalQueue = async () => {
-  const response = await api.get('/admin/reimbursements');
+// For regular admins: returns PENDING/QUERY_RAISED claims at their priority level.
+// For SUPER_ADMIN: returns all reimbursements (with optional ?status= filter).
+export const getApprovalQueue = async (status = '') => {
+  const params = status ? { status } : {};
+  const response = await api.get('/admin/reimbursements', { params });
   return response.data;
 };
 
@@ -24,6 +27,25 @@ export const rejectReimbursement = async (id, remark = '') => {
 
 export const raiseQueryOnReimbursement = async (id, remark) => {
   const response = await api.post(`/admin/reimbursements/${id}/query`, { remark });
+  return response.data;
+};
+
+// Mark an APPROVED reimbursement as paid (SUPER_ADMIN only)
+export const markAsPaid = async (id) => {
+  const response = await api.post(`/admin/reimbursements/${id}/mark-paid`);
+  return response.data;
+};
+
+// Get the full activity log for a reimbursement (admin access)
+export const getApprovalActivityLog = async (id) => {
+  const response = await api.get(`/admin/reimbursements/${id}/activity`);
+  return response.data;
+};
+
+// SUPER_ADMIN global audit: all reimbursements with optional status filter
+export const listAllReimbursements = async (status = '') => {
+  const params = status ? { status } : {};
+  const response = await api.get('/admin/reimbursements', { params });
   return response.data;
 };
 

@@ -16,7 +16,7 @@ const router = express.Router();
 router.use(userAuthMiddleware);
 
 // ── Reimbursement CRUD ──────────────────────────────────────────────────────
-router.post("/", createReimbursement);
+router.post("/", upload.array("receipts"), createReimbursement);
 router.get("/", getMyReimbursements);
 router.get("/:id", getReimbursementDetails);
 router.post("/:id/cancel", cancelReimbursement);
