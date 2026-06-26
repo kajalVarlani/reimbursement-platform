@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import { useDispatch, useSelector } from 'react-redux';
 import { useNavigate } from 'react-router-dom';
 import { logout } from '../store/authSlice';
@@ -55,6 +55,130 @@ function ApprovalQueue() {
   const [loading, setLoading] = useState(true);
   const [selectedClaim, setSelectedClaim] = useState(null);
   const [statusFilter, setStatusFilter] = useState('');
+
+  // Search & Filter state
+  const [searchTerm, setSearchTerm] = useState('');
+  const [committeeFilter, setCommitteeFilter] = useState('');
+  const [minAmount, setMinAmount] = useState('');
+  const [maxAmount, setMaxAmount] = useState('');
+
+  const resetFilters = () => {
+    setSearchTerm('');
+    setCommitteeFilter('');
+    setMinAmount('');
+    setMaxAmount('');
+  };
+
+  // Dynamic list of unique committees for the filter dropdown
+  const committees = useMemo(() => {
+    const list = new Set();
+    claims.forEach((c) => {
+      if (c.committee) list.add(c.committee);
+    });
+    return Array.from(list).sort();
+  }, [claims]);
+
+  const filteredClaims = useMemo(() => {
+    return claims.filter((claim) => {
+      if (searchTerm.trim()) {
+        const term = searchTerm.toLowerCase().trim();
+        const matchesUser = claim.user?.name?.toLowerCase().includes(term) || claim.user?.email?.toLowerCase().includes(term);
+        const matchesEvent = claim.event?.toLowerCase().includes(term);
+        const matchesCommittee = claim.committee?.toLowerCase().includes(term);
+        const matchesDesc = claim.description?.toLowerCase().includes(term);
+        const matchesAmount = String(claim.amount).includes(term);
+        if (!matchesUser && !matchesEvent && !matchesCommittee && !matchesDesc && !matchesAmount) {
+          return false;
+        }
+      }
+
+      if (committeeFilter && claim.committee !== committeeFilter) {
+        return false;
+      }
+
+      if (minAmount.trim()) {
+        const minVal = parseFloat(minAmount);
+        if (!isNaN(minVal) && claim.amount < minVal) return false;
+      }
+
+      if (maxAmount.trim()) {
+        const maxVal = parseFloat(maxAmount);
+        if (!isNaN(maxVal) && claim.amount > maxVal) return false;
+      }
+
+      return true;
+    });
+  }, [claims, searchTerm, committeeFilter, minAmount, maxAmount]);
+
+  const renderFilterBar = () => (
+    <div style={{
+      display: 'flex',
+      flexWrap: 'wrap',
+      gap: '12px',
+      padding: '16px 20px',
+      backgroundColor: 'var(--bg-secondary)',
+      borderBottom: '1px solid var(--border-light)',
+      alignItems: 'center',
+      borderRadius: 'var(--radius-lg) var(--radius-lg) 0 0'
+    }}>
+      <div style={{ flex: '1 1 200px', position: 'relative' }}>
+        <input
+          type="text"
+          className="form-input"
+          style={{ paddingLeft: '14px', width: '100%', height: '38px', fontSize: '13.5px' }}
+          placeholder="Search by submitter, event, committee, amount..."
+          value={searchTerm}
+          onChange={(e) => setSearchTerm(e.target.value)}
+        />
+      </div>
+
+      <div style={{ minWidth: '150px' }}>
+        <select
+          className="form-select"
+          style={{ width: '100%', height: '38px', fontSize: '13px', padding: '0 12px' }}
+          value={committeeFilter}
+          onChange={(e) => setCommitteeFilter(e.target.value)}
+        >
+          <option value="">All Committees</option>
+          {committees.map((comm) => (
+            <option key={comm} value={comm}>{comm}</option>
+          ))}
+        </select>
+      </div>
+
+      <div style={{ width: '100px' }}>
+        <input
+          type="number"
+          className="form-input"
+          style={{ paddingLeft: '10px', width: '100%', height: '38px', fontSize: '13px' }}
+          placeholder="Min ₹"
+          value={minAmount}
+          onChange={(e) => setMinAmount(e.target.value)}
+        />
+      </div>
+
+      <div style={{ width: '100px' }}>
+        <input
+          type="number"
+          className="form-input"
+          style={{ paddingLeft: '10px', width: '100%', height: '38px', fontSize: '13px' }}
+          placeholder="Max ₹"
+          value={maxAmount}
+          onChange={(e) => setMaxAmount(e.target.value)}
+        />
+      </div>
+
+      {(searchTerm || committeeFilter || minAmount || maxAmount) && (
+        <button
+          onClick={resetFilters}
+          className="btn-secondary"
+          style={{ padding: '8px 14px', height: '38px', fontSize: '13px', display: 'flex', alignItems: 'center', gap: '4px' }}
+        >
+          Clear
+        </button>
+      )}
+    </div>
+  );
 
   // Confirm action modal state
   const [confirmModal, setConfirmModal] = useState({
@@ -317,127 +441,142 @@ function ApprovalQueue() {
               </p>
             </div>
           ) : (
-            <div className="claims-table-wrapper">
-              <table className="claims-table">
-                <thead>
-                  <tr>
-                    <th>Date</th>
-                    <th>Submitted By</th>
-                    <th>Committee</th>
-                    <th>Event</th>
-                    <th>Amount</th>
-                    <th>{isSuperAdmin ? 'Status' : 'Priority Level'}</th>
-                    <th style={{ textAlign: 'right' }}>Actions</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {claims.map((claim) => (
-                    <tr key={claim.id}>
-                      <td>
-                        {new Date(claim.createdAt).toLocaleDateString('en-IN', {
-                          day: '2-digit',
-                          month: 'short',
-                          year: 'numeric',
-                        })}
-                      </td>
-                      <td className="cell-bold">{claim.user?.name || '—'}</td>
-                      <td>{claim.committee}</td>
-                      <td>
-                        <div style={{ display: 'flex', flexDirection: 'column' }}>
-                          <span>{claim.event}</span>
-                          {claim.bills?.some((rb) => rb.conflicts?.some((c) => c.isUnderSameApprovalRightNow)) && (
-                            <span className="duplicate-badge-table" title="At least one bill in this claim is also attached to another claim under active approval">
-                              ⚠️ Duplicate Bill
-                            </span>
-                          )}
-                        </div>
-                      </td>
-                      <td className="cell-amount">₹{claim.amount.toLocaleString('en-IN')}</td>
-                      <td>
-                        {isSuperAdmin ? (
-                          <span className={`status-badge ${claim.status.toLowerCase().replace('_', '-')}`}>
-                            <span className="status-dot" />
-                            {STATUS_LABELS[claim.status] || claim.status}
-                          </span>
-                        ) : (
-                          <span className="priority-badge">Level {claim.currentPriority}</span>
-                        )}
-                      </td>
-                      <td style={{ textAlign: 'right' }}>
-                        <div className="action-btn-group">
-                          <button
-                            className="btn-action-icon"
-                            onClick={() => setSelectedClaim(claim)}
-                            title="View Details"
-                            id={`btn-view-${claim.id}`}
-                          >
-                            <HiOutlineEye />
-                          </button>
-                          <button
-                            className="btn-action-icon"
-                            onClick={() => openActivityLog(claim.id)}
-                            title="Activity Log"
-                            id={`btn-activity-${claim.id}`}
-                          >
-                            <HiOutlineClipboardList />
-                          </button>
-                          {/* Regular admin actions — only on PENDING/QUERY_RAISED */}
-                          {!isSuperAdmin && (claim.status === 'PENDING' || claim.status === 'QUERY_RAISED') && (
-                            <>
+            <>
+              {renderFilterBar()}
+              
+              {filteredClaims.length === 0 ? (
+                <div className="empty-state" style={{ padding: '40px 20px' }}>
+                  <HiOutlineClock className="empty-state-icon" style={{ color: 'var(--text-muted)' }} />
+                  <h3 className="empty-state-title">No matching claims</h3>
+                  <p className="empty-state-text">Try adjusting your search terms or filters.</p>
+                  <button className="btn-secondary" onClick={resetFilters} style={{ padding: '8px 16px', fontSize: '13px', margin: '12px auto 0 auto' }}>
+                    Reset Filters
+                  </button>
+                </div>
+              ) : (
+                <div className="claims-table-wrapper">
+                  <table className="claims-table">
+                    <thead>
+                      <tr>
+                        <th>Date</th>
+                        <th>Submitted By</th>
+                        <th>Committee</th>
+                        <th>Event</th>
+                        <th>Amount</th>
+                        <th>{isSuperAdmin ? 'Status' : 'Priority Level'}</th>
+                        <th style={{ textAlign: 'right' }}>Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {filteredClaims.map((claim) => (
+                        <tr key={claim.id}>
+                          <td>
+                            {new Date(claim.createdAt).toLocaleDateString('en-IN', {
+                              day: '2-digit',
+                              month: 'short',
+                              year: 'numeric',
+                            })}
+                          </td>
+                          <td className="cell-bold">{claim.user?.name || '—'}</td>
+                          <td>{claim.committee}</td>
+                          <td>
+                            <div style={{ display: 'flex', flexDirection: 'column' }}>
+                              <span>{claim.event}</span>
+                              {claim.bills?.some((rb) => rb.conflicts?.some((c) => ['APPROVED', 'PENDING', 'QUERY_RAISED'].includes(c.status))) && (
+                                <span className="duplicate-badge-table" title="At least one bill in this claim is also attached to another active or approved claim">
+                                  ⚠️ Duplicate Bill
+                                </span>
+                              )}
+                            </div>
+                          </td>
+                          <td className="cell-amount">₹{claim.amount.toLocaleString('en-IN')}</td>
+                          <td>
+                            {isSuperAdmin ? (
+                              <span className={`status-badge ${claim.status.toLowerCase().replace('_', '-')}`}>
+                                <span className="status-dot" />
+                                {STATUS_LABELS[claim.status] || claim.status}
+                              </span>
+                            ) : (
+                              <span className="priority-badge">Level {claim.currentPriority}</span>
+                            )}
+                          </td>
+                          <td style={{ textAlign: 'right' }}>
+                            <div className="action-btn-group">
                               <button
-                                className="btn-action-approve"
-                                onClick={() => openConfirm('approve', claim.id)}
-                                title="Approve"
-                                id={`btn-approve-${claim.id}`}
+                                className="btn-action-icon"
+                                onClick={() => setSelectedClaim(claim)}
+                                title="View Details"
+                                id={`btn-view-${claim.id}`}
                               >
-                                <HiOutlineThumbUp />
-                                Approve
+                                <HiOutlineEye />
                               </button>
                               <button
-                                className="btn-action-query"
-                                onClick={() => openConfirm('query', claim.id)}
-                                title="Raise Query"
-                                id={`btn-query-${claim.id}`}
+                                className="btn-action-icon"
+                                onClick={() => openActivityLog(claim.id)}
+                                title="Activity Log"
+                                id={`btn-activity-${claim.id}`}
                               >
-                                <HiOutlineQuestionMarkCircle />
-                                Query
+                                <HiOutlineClipboardList />
                               </button>
-                              <button
-                                className="btn-action-reject"
-                                onClick={() => openConfirm('reject', claim.id)}
-                                title="Reject"
-                                id={`btn-reject-${claim.id}`}
-                              >
-                                <HiOutlineThumbDown />
-                                Reject
-                              </button>
-                            </>
-                          )}
-                          {/* Super Admin — view only; no approve/reject/query */}
-                          {/* Super Admin — mark as paid on APPROVED claims */}
-                          {isSuperAdmin && claim.status === 'APPROVED' && !claim.isPaid && (
-                            <button
-                              className="btn-action-approve"
-                              onClick={() => openConfirm('mark-paid', claim.id)}
-                              title="Mark as Paid"
-                              id={`btn-mark-paid-${claim.id}`}
-                            >
-                              <HiOutlineCurrencyRupee />
-                              Mark Paid
-                            </button>
-                          )}
-                          {isSuperAdmin && claim.isPaid && (
-                            <span style={{ fontSize: '12px', color: 'var(--success)', fontWeight: 600, padding: '4px 8px' }}>
-                              ✅ Paid
-                            </span>
-                          )}
-                        </div>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
+                              {/* Regular admin actions — only on PENDING/QUERY_RAISED */}
+                              {!isSuperAdmin && (claim.status === 'PENDING' || claim.status === 'QUERY_RAISED') && (
+                                <>
+                                  <button
+                                    className="btn-action-approve"
+                                    onClick={() => openConfirm('approve', claim.id)}
+                                    title="Approve"
+                                    id={`btn-approve-${claim.id}`}
+                                  >
+                                    <HiOutlineThumbUp />
+                                    Approve
+                                  </button>
+                                  <button
+                                    className="btn-action-query"
+                                    onClick={() => openConfirm('query', claim.id)}
+                                    title="Raise Query"
+                                    id={`btn-query-${claim.id}`}
+                                  >
+                                    <HiOutlineQuestionMarkCircle />
+                                    Query
+                                  </button>
+                                  <button
+                                    className="btn-action-reject"
+                                    onClick={() => openConfirm('reject', claim.id)}
+                                    title="Reject"
+                                    id={`btn-reject-${claim.id}`}
+                                  >
+                                    <HiOutlineThumbDown />
+                                    Reject
+                                  </button>
+                                </>
+                              )}
+                              {/* Super Admin — view only; no approve/reject/query */}
+                              {/* Super Admin — mark as paid on APPROVED claims */}
+                              {isSuperAdmin && claim.status === 'APPROVED' && !claim.isPaid && (
+                                <button
+                                  className="btn-action-approve"
+                                  onClick={() => openConfirm('mark-paid', claim.id)}
+                                  title="Mark as Paid"
+                                  id={`btn-mark-paid-${claim.id}`}
+                                >
+                                  <HiOutlineCurrencyRupee />
+                                  Mark Paid
+                                </button>
+                              )}
+                              {isSuperAdmin && claim.isPaid && (
+                                <span style={{ fontSize: '12px', color: 'var(--success)', fontWeight: 600, padding: '4px 8px' }}>
+                                  ✅ Paid
+                                </span>
+                              )}
+                            </div>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </>
           )}
         </section>
       </main>
@@ -606,16 +745,36 @@ function ApprovalQueue() {
                     {selectedClaim.bills.map((rb, idx) => {
                       const b = rb.bill;
                       if (!b) return null;
-                      const hasSameLevelDuplicate = rb.conflicts?.some((c) => c.isUnderSameApprovalRightNow);
+                      const hasConflict = rb.conflicts?.some((c) => ['APPROVED', 'PENDING', 'QUERY_RAISED'].includes(c.status));
+                      
+                      const billAmount = b.amount || 0;
+                      const currentRequested = rb.allocatedAmount || 0;
+
+                      const approvedAllocated = rb.conflicts
+                        ? rb.conflicts
+                            .filter((c) => c.status === 'APPROVED')
+                            .reduce((sum, c) => sum + (c.allocatedAmount || 0), 0)
+                        : 0;
+
+                      const pendingAllocated = rb.conflicts
+                        ? rb.conflicts
+                            .filter((c) => c.status === 'PENDING' || c.status === 'QUERY_RAISED')
+                            .reduce((sum, c) => sum + (c.allocatedAmount || 0), 0)
+                        : 0;
+
+                      const remainingBeforeThis = Math.max(0, billAmount - approvedAllocated);
+                      const netRemaining = billAmount - (approvedAllocated + pendingAllocated + currentRequested);
+                      const isOverAllocated = (approvedAllocated + pendingAllocated + currentRequested) > billAmount;
+
                       return (
                         <div
                           key={b.id || idx}
                           style={{
-                            border: hasSameLevelDuplicate ? '2px solid rgba(220, 75, 75, 0.45)' : '1px solid var(--wc-100)',
+                            border: hasConflict ? '2px solid rgba(220, 75, 75, 0.45)' : '1px solid var(--wc-100)',
                             borderRadius: '10px',
                             padding: '16px',
-                            background: hasSameLevelDuplicate ? 'rgba(220, 75, 75, 0.01)' : 'var(--card-bg-subtle, #f9fafb)',
-                            boxShadow: hasSameLevelDuplicate ? '0 0 8px rgba(220, 75, 75, 0.05)' : 'none',
+                            background: hasConflict ? 'rgba(220, 75, 75, 0.01)' : 'var(--card-bg-subtle, #f9fafb)',
+                            boxShadow: hasConflict ? '0 0 8px rgba(220, 75, 75, 0.05)' : 'none',
                           }}
                         >
                           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px', borderBottom: '1px dashed var(--wc-100)', paddingBottom: '8px' }}>
@@ -694,13 +853,91 @@ function ApprovalQueue() {
                                 <span>⚠️ Duplicate Bill Detected</span>
                               </div>
                               <div className="conflict-body">
+                                
+                                {/* Allocation Breakdown summary */}
+                                <div style={{
+                                  margin: '0 0 16px 0',
+                                  padding: '12px',
+                                  backgroundColor: '#fff',
+                                  border: isOverAllocated ? '1px solid rgba(220, 75, 75, 0.3)' : '1px solid var(--wc-100)',
+                                  borderRadius: '8px',
+                                  boxShadow: '0 1px 3px rgba(0,0,0,0.02)'
+                                }}>
+                                  <h4 style={{ margin: '0 0 10px 0', fontSize: '13px', color: isOverAllocated ? '#bc3535' : 'var(--primary)', display: 'flex', alignItems: 'center', gap: '6px', fontWeight: 700 }}>
+                                    📊 Bill Allocation Summary
+                                  </h4>
+                                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '8px 16px', fontSize: '12.5px', marginBottom: '10px' }}>
+                                    <div>
+                                      <span style={{ color: 'var(--text-muted)' }}>Total Bill Value:</span>
+                                      <strong style={{ marginLeft: '6px' }}>₹{billAmount.toLocaleString('en-IN')}</strong>
+                                    </div>
+                                    <div>
+                                      <span style={{ color: 'var(--text-muted)' }}>Requested in this Claim:</span>
+                                      <strong style={{ marginLeft: '6px', color: 'var(--primary)' }}>₹{currentRequested.toLocaleString('en-IN')}</strong>
+                                    </div>
+                                    <div>
+                                      <span style={{ color: 'var(--text-muted)' }}>Approved in other Claims:</span>
+                                      <strong style={{ marginLeft: '6px', color: 'var(--success)' }}>₹{approvedAllocated.toLocaleString('en-IN')}</strong>
+                                    </div>
+                                    <div>
+                                      <span style={{ color: 'var(--text-muted)' }}>Pending in other Claims:</span>
+                                      <strong style={{ marginLeft: '6px', color: '#c98218' }}>₹{pendingAllocated.toLocaleString('en-IN')}</strong>
+                                    </div>
+                                  </div>
+                                  
+                                  <div style={{
+                                    paddingTop: '10px',
+                                    borderTop: '1px dashed var(--wc-100)',
+                                    fontSize: '13px'
+                                  }}>
+                                    <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '6px' }}>
+                                      <span style={{ color: 'var(--text-muted)' }}>Max amount remaining that can be claimed:</span>
+                                      <strong style={{ color: remainingBeforeThis <= 0 ? '#bc3535' : 'var(--text-primary)' }}>
+                                        ₹{remainingBeforeThis.toLocaleString('en-IN')}
+                                      </strong>
+                                    </div>
+                                    
+                                    {isOverAllocated ? (
+                                      <div style={{
+                                        marginTop: '6px',
+                                        color: '#bc3535',
+                                        background: 'rgba(220, 75, 75, 0.05)',
+                                        padding: '8px 10px',
+                                        borderRadius: '6px',
+                                        fontWeight: 600,
+                                        fontSize: '12px',
+                                        border: '1px solid rgba(220, 75, 75, 0.15)'
+                                      }}>
+                                        ⚠️ Over-allocated: Combined claims (₹{(approvedAllocated + pendingAllocated + currentRequested).toLocaleString('en-IN')}) exceed total bill value by ₹{((approvedAllocated + pendingAllocated + currentRequested) - billAmount).toLocaleString('en-IN')}.
+                                      </div>
+                                    ) : (
+                                      <div style={{
+                                        marginTop: '6px',
+                                        color: '#1e7550',
+                                        background: 'rgba(42, 157, 110, 0.05)',
+                                        padding: '8px 10px',
+                                        borderRadius: '6px',
+                                        fontWeight: 600,
+                                        fontSize: '12px',
+                                        border: '1px solid rgba(42, 157, 110, 0.15)'
+                                      }}>
+                                        ✅ Safe: Combined claims are within the bill value. Remaining after this claim: ₹{netRemaining.toLocaleString('en-IN')}.
+                                      </div>
+                                    )}
+                                  </div>
+                                </div>
+
                                 <p style={{ fontSize: '13px', marginBottom: '8px', fontWeight: 600 }}>
                                   This bill is shared with {rb.conflicts.length} other claim{rb.conflicts.length > 1 ? 's' : ''}:
                                 </p>
                                 <ul className="conflict-list" style={{ paddingLeft: '18px', listStyleType: 'disc' }}>
                                   {rb.conflicts.map((c, cIdx) => (
                                     <li key={c.reimbursementId || cIdx} className="conflict-item" style={{ marginBottom: '6px' }}>
-                                      <strong>{c.committee} &mdash; {c.event}</strong> (₹{c.amount.toLocaleString('en-IN')})
+                                      <strong>{c.committee} &mdash; {c.event}</strong> (Claim total: ₹{c.amount.toLocaleString('en-IN')})
+                                      <br />
+                                      <span style={{ fontSize: '12px', color: 'var(--text-primary)' }}>
+                                        Allocated on this bill: <strong>₹{(c.allocatedAmount || 0).toLocaleString('en-IN')}</strong>
+                                      </span>
                                       <br />
                                       <span style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>
                                         Submitted by: {c.user?.name || '—'} ({c.user?.email || '—'})

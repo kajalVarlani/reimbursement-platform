@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import { useDispatch, useSelector } from 'react-redux';
 import { useNavigate } from 'react-router-dom';
 import { logout } from '../store/authSlice';
@@ -80,6 +80,19 @@ function UsersTab() {
   const [deleteTarget, setDeleteTarget] = useState(null);
   const [deleting, setDeleting] = useState(false);
 
+  // Search state
+  const [searchTerm, setSearchTerm] = useState('');
+
+  const filteredUsers = useMemo(() => {
+    return users.filter((u) => {
+      if (searchTerm.trim()) {
+        const term = searchTerm.toLowerCase().trim();
+        return u.name?.toLowerCase().includes(term) || u.email?.toLowerCase().includes(term);
+      }
+      return true;
+    });
+  }, [users, searchTerm]);
+
   const fetchUsers = useCallback(async () => {
     setLoading(true);
     try {
@@ -132,8 +145,23 @@ function UsersTab() {
 
   return (
     <>
-      <div className="tab-content-header">
-        <span className="tab-count">{users.length} users</span>
+      <div className="tab-content-header" style={{ display: 'flex', gap: '16px', flexWrap: 'wrap', alignItems: 'center', justifyContent: 'space-between' }}>
+        <div style={{ display: 'flex', gap: '16px', alignItems: 'center', flex: '1 1 auto' }}>
+          <span className="tab-count">{users.length} users</span>
+          <input
+            type="text"
+            className="form-input"
+            style={{ paddingLeft: '12px', height: '36px', fontSize: '13px', width: '220px' }}
+            placeholder="Search users by name/email..."
+            value={searchTerm}
+            onChange={(e) => setSearchTerm(e.target.value)}
+          />
+          {searchTerm && (
+            <button className="btn-secondary" onClick={() => setSearchTerm('')} style={{ padding: '6px 12px', height: '36px', fontSize: '12.5px' }}>
+              Clear
+            </button>
+          )}
+        </div>
         <button className="btn-primary" onClick={() => setShowForm(!showForm)} id="btn-add-user">
           <HiOutlinePlus /> Add User
         </button>
@@ -193,6 +221,12 @@ function UsersTab() {
             <h3 className="empty-state-title">No users yet</h3>
             <p className="empty-state-text">Add your first user to get started.</p>
           </div>
+        ) : filteredUsers.length === 0 ? (
+          <div className="empty-state" style={{ padding: '32px 20px' }}>
+            <HiOutlineUsers className="empty-state-icon" style={{ color: 'var(--text-muted)' }} />
+            <h3 className="empty-state-title">No matching users</h3>
+            <p className="empty-state-text">Try adjusting your search query.</p>
+          </div>
         ) : (
           <table className="claims-table">
             <thead>
@@ -205,7 +239,7 @@ function UsersTab() {
               </tr>
             </thead>
             <tbody>
-              {users.map((u, i) => (
+              {filteredUsers.map((u, i) => (
                 <tr key={u.id}>
                   <td style={{ color: 'var(--text-muted)', fontSize: '13px' }}>{i + 1}</td>
                   <td className="cell-bold">{u.name}</td>
@@ -253,6 +287,32 @@ function AdminsTab() {
   const [submitting, setSubmitting] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState(null);
   const [deleting, setDeleting] = useState(false);
+
+  // Search & Filter state
+  const [searchTerm, setSearchTerm] = useState('');
+  const [roleFilter, setRoleFilter] = useState('');
+  const [positionFilter, setPositionFilter] = useState('');
+
+  const filteredAdmins = useMemo(() => {
+    return admins.filter((a) => {
+      if (searchTerm.trim()) {
+        const term = searchTerm.toLowerCase().trim();
+        const matchesName = a.name?.toLowerCase().includes(term);
+        const matchesEmail = a.email?.toLowerCase().includes(term);
+        if (!matchesName && !matchesEmail) return false;
+      }
+
+      if (roleFilter && a.role !== roleFilter) {
+        return false;
+      }
+
+      if (positionFilter && a.positionId !== positionFilter) {
+        return false;
+      }
+
+      return true;
+    });
+  }, [admins, searchTerm, roleFilter, positionFilter]);
 
   const fetchData = useCallback(async () => {
     setLoading(true);
@@ -316,8 +376,44 @@ function AdminsTab() {
 
   return (
     <>
-      <div className="tab-content-header">
-        <span className="tab-count">{admins.length} administrators</span>
+      <div className="tab-content-header" style={{ display: 'flex', gap: '16px', flexWrap: 'wrap', alignItems: 'center', justifyContent: 'space-between' }}>
+        <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap', alignItems: 'center', flex: '1 1 auto' }}>
+          <span className="tab-count">{admins.length} admins</span>
+          <input
+            type="text"
+            className="form-input"
+            style={{ paddingLeft: '12px', height: '36px', fontSize: '13px', width: '180px' }}
+            placeholder="Search admins..."
+            value={searchTerm}
+            onChange={(e) => setSearchTerm(e.target.value)}
+          />
+          <select
+            className="form-select"
+            style={{ height: '36px', fontSize: '12.5px', padding: '0 10px', minWidth: '120px' }}
+            value={roleFilter}
+            onChange={(e) => setRoleFilter(e.target.value)}
+          >
+            <option value="">All Roles</option>
+            <option value="SUPER_ADMIN">Super Admin</option>
+            <option value="ADMINISTRATOR">Administrator</option>
+          </select>
+          <select
+            className="form-select"
+            style={{ height: '36px', fontSize: '12.5px', padding: '0 10px', minWidth: '150px' }}
+            value={positionFilter}
+            onChange={(e) => setPositionFilter(e.target.value)}
+          >
+            <option value="">All Positions</option>
+            {positions.map((pos) => (
+              <option key={pos.id} value={pos.id}>{pos.name} (L{pos.priority})</option>
+            ))}
+          </select>
+          {(searchTerm || roleFilter || positionFilter) && (
+            <button className="btn-secondary" onClick={() => { setSearchTerm(''); setRoleFilter(''); setPositionFilter(''); }} style={{ padding: '6px 12px', height: '36px', fontSize: '12.5px' }}>
+              Clear
+            </button>
+          )}
+        </div>
         <button className="btn-primary" onClick={() => setShowForm(!showForm)} id="btn-add-admin">
           <HiOutlinePlus /> Add Administrator
         </button>
@@ -408,6 +504,12 @@ function AdminsTab() {
             <h3 className="empty-state-title">No administrators yet</h3>
             <p className="empty-state-text">Add your first administrator to build the approval workflow.</p>
           </div>
+        ) : filteredAdmins.length === 0 ? (
+          <div className="empty-state" style={{ padding: '32px 20px' }}>
+            <HiOutlineShieldCheck className="empty-state-icon" style={{ color: 'var(--text-muted)' }} />
+            <h3 className="empty-state-title">No matching administrators</h3>
+            <p className="empty-state-text">Try adjusting your search or filters.</p>
+          </div>
         ) : (
           <table className="claims-table">
             <thead>
@@ -422,7 +524,7 @@ function AdminsTab() {
               </tr>
             </thead>
             <tbody>
-              {admins.map((a, i) => (
+              {filteredAdmins.map((a, i) => (
                 <tr key={a.id}>
                   <td style={{ color: 'var(--text-muted)', fontSize: '13px' }}>{i + 1}</td>
                   <td className="cell-bold">{a.name}</td>
@@ -480,6 +582,19 @@ function PositionsTab() {
   const [editSaving, setEditSaving] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState(null);
   const [deleting, setDeleting] = useState(false);
+
+  // Search state
+  const [searchTerm, setSearchTerm] = useState('');
+
+  const filteredPositions = useMemo(() => {
+    return positions.filter((p) => {
+      if (searchTerm.trim()) {
+        const term = searchTerm.toLowerCase().trim();
+        return p.name?.toLowerCase().includes(term);
+      }
+      return true;
+    });
+  }, [positions, searchTerm]);
 
   const fetchPositions = useCallback(async () => {
     setLoading(true);
@@ -554,8 +669,23 @@ function PositionsTab() {
 
   return (
     <>
-      <div className="tab-content-header">
-        <span className="tab-count">{positions.length} positions</span>
+      <div className="tab-content-header" style={{ display: 'flex', gap: '16px', flexWrap: 'wrap', alignItems: 'center', justifyContent: 'space-between' }}>
+        <div style={{ display: 'flex', gap: '16px', alignItems: 'center', flex: '1 1 auto' }}>
+          <span className="tab-count">{positions.length} positions</span>
+          <input
+            type="text"
+            className="form-input"
+            style={{ paddingLeft: '12px', height: '36px', fontSize: '13px', width: '220px' }}
+            placeholder="Search positions..."
+            value={searchTerm}
+            onChange={(e) => setSearchTerm(e.target.value)}
+          />
+          {searchTerm && (
+            <button className="btn-secondary" onClick={() => setSearchTerm('')} style={{ padding: '6px 12px', height: '36px', fontSize: '12.5px' }}>
+              Clear
+            </button>
+          )}
+        </div>
         <button className="btn-primary" onClick={() => setShowForm(!showForm)} id="btn-add-position">
           <HiOutlinePlus /> Add Position
         </button>
@@ -619,6 +749,12 @@ function PositionsTab() {
               Create positions to define the approval hierarchy for reimbursement claims.
             </p>
           </div>
+        ) : filteredPositions.length === 0 ? (
+          <div className="empty-state" style={{ padding: '32px 20px' }}>
+            <HiOutlineTag className="empty-state-icon" style={{ color: 'var(--text-muted)' }} />
+            <h3 className="empty-state-title">No matching positions</h3>
+            <p className="empty-state-text">Try adjusting your search query.</p>
+          </div>
         ) : (
           <table className="claims-table">
             <thead>
@@ -629,7 +765,7 @@ function PositionsTab() {
               </tr>
             </thead>
             <tbody>
-              {positions.map((pos) => (
+              {filteredPositions.map((pos) => (
                 <tr key={pos.id}>
                   {editingId === pos.id ? (
                     <>

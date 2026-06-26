@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import { useDispatch, useSelector } from 'react-redux';
 import { useNavigate } from 'react-router-dom';
 import { logout } from '../store/authSlice';
@@ -26,6 +26,155 @@ function ApprovalHistory() {
   const [loading, setLoading] = useState(true);
   const [selectedClaim, setSelectedClaim] = useState(null);
   const [activityModal, setActivityModal] = useState({ open: false, logs: [], loading: false });
+
+  // Search & Filter state
+  const [searchTerm, setSearchTerm] = useState('');
+  const [actionFilter, setActionFilter] = useState('');
+  const [committeeFilter, setCommitteeFilter] = useState('');
+  const [minAmount, setMinAmount] = useState('');
+  const [maxAmount, setMaxAmount] = useState('');
+
+  const resetFilters = () => {
+    setSearchTerm('');
+    setActionFilter('');
+    setCommitteeFilter('');
+    setMinAmount('');
+    setMaxAmount('');
+  };
+
+  // Dynamic list of unique committees for the filter dropdown
+  const committees = useMemo(() => {
+    const list = new Set();
+    history.forEach((h) => {
+      const claim = h.reimbursement;
+      if (claim?.committee) list.add(claim.committee);
+    });
+    return Array.from(list).sort();
+  }, [history]);
+
+  const filteredHistory = useMemo(() => {
+    return history.filter((record) => {
+      const claim = record.reimbursement;
+      if (!claim) return false;
+
+      if (searchTerm.trim()) {
+        const term = searchTerm.toLowerCase().trim();
+        const matchesUser = claim.user?.name?.toLowerCase().includes(term) || claim.user?.email?.toLowerCase().includes(term);
+        const matchesEvent = claim.event?.toLowerCase().includes(term);
+        const matchesCommittee = claim.committee?.toLowerCase().includes(term);
+        const matchesDesc = claim.description?.toLowerCase().includes(term);
+        const matchesRemark = record.remark?.toLowerCase().includes(term);
+        const matchesAmount = String(claim.amount).includes(term);
+        if (!matchesUser && !matchesEvent && !matchesCommittee && !matchesDesc && !matchesRemark && !matchesAmount) {
+          return false;
+        }
+      }
+
+      if (actionFilter && record.status !== actionFilter) {
+        return false;
+      }
+
+      if (committeeFilter && claim.committee !== committeeFilter) {
+        return false;
+      }
+
+      if (minAmount.trim()) {
+        const minVal = parseFloat(minAmount);
+        if (!isNaN(minVal) && claim.amount < minVal) return false;
+      }
+
+      if (maxAmount.trim()) {
+        const maxVal = parseFloat(maxAmount);
+        if (!isNaN(maxVal) && claim.amount > maxVal) return false;
+      }
+
+      return true;
+    });
+  }, [history, searchTerm, actionFilter, committeeFilter, minAmount, maxAmount]);
+
+  const renderFilterBar = () => (
+    <div style={{
+      display: 'flex',
+      flexWrap: 'wrap',
+      gap: '12px',
+      padding: '16px 20px',
+      backgroundColor: 'var(--bg-secondary)',
+      borderBottom: '1px solid var(--border-light)',
+      alignItems: 'center',
+      borderRadius: 'var(--radius-lg) var(--radius-lg) 0 0'
+    }}>
+      <div style={{ flex: '1 1 200px', position: 'relative' }}>
+        <input
+          type="text"
+          className="form-input"
+          style={{ paddingLeft: '14px', width: '100%', height: '38px', fontSize: '13.5px' }}
+          placeholder="Search by submitter, event, committee, remark..."
+          value={searchTerm}
+          onChange={(e) => setSearchTerm(e.target.value)}
+        />
+      </div>
+
+      <div style={{ minWidth: '130px' }}>
+        <select
+          className="form-select"
+          style={{ width: '100%', height: '38px', fontSize: '13px', padding: '0 12px' }}
+          value={actionFilter}
+          onChange={(e) => setActionFilter(e.target.value)}
+        >
+          <option value="">All Actions</option>
+          <option value="APPROVED">Approved</option>
+          <option value="REJECTED">Rejected</option>
+          <option value="QUERY_RAISED">Query Raised</option>
+        </select>
+      </div>
+
+      <div style={{ minWidth: '150px' }}>
+        <select
+          className="form-select"
+          style={{ width: '100%', height: '38px', fontSize: '13px', padding: '0 12px' }}
+          value={committeeFilter}
+          onChange={(e) => setCommitteeFilter(e.target.value)}
+        >
+          <option value="">All Committees</option>
+          {committees.map((comm) => (
+            <option key={comm} value={comm}>{comm}</option>
+          ))}
+        </select>
+      </div>
+
+      <div style={{ width: '100px' }}>
+        <input
+          type="number"
+          className="form-input"
+          style={{ paddingLeft: '10px', width: '100%', height: '38px', fontSize: '13px' }}
+          placeholder="Min ₹"
+          value={minAmount}
+          onChange={(e) => setMinAmount(e.target.value)}
+        />
+      </div>
+
+      <div style={{ width: '100px' }}>
+        <input
+          type="number"
+          className="form-input"
+          style={{ paddingLeft: '10px', width: '100%', height: '38px', fontSize: '13px' }}
+          placeholder="Max ₹"
+          value={maxAmount}
+          onChange={(e) => setMaxAmount(e.target.value)}
+        />
+      </div>
+
+      {(searchTerm || actionFilter || committeeFilter || minAmount || maxAmount) && (
+        <button
+          onClick={resetFilters}
+          className="btn-secondary"
+          style={{ padding: '8px 14px', height: '38px', fontSize: '13px', display: 'flex', alignItems: 'center', gap: '4px' }}
+        >
+          Clear
+        </button>
+      )}
+    </div>
+  );
 
   const openActivityLog = async (claimId) => {
     setActivityModal({ open: true, logs: [], loading: true });
@@ -190,77 +339,92 @@ function ApprovalHistory() {
               </p>
             </div>
           ) : (
-            <div className="claims-table-wrapper">
-              <table className="claims-table">
-                <thead>
-                  <tr>
-                    <th>Action Date</th>
-                    <th>Submitted By</th>
-                    <th>Committee</th>
-                    <th>Event</th>
-                    <th>Amount</th>
-                    <th>Your Action</th>
-                    <th>Your Remark</th>
-                    <th style={{ textAlign: 'right' }}>Details</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {history.map((record) => {
-                    const claim = record.reimbursement;
-                    return (
-                      <tr key={record.id}>
-                        <td>
-                          {record.actedAt
-                            ? new Date(record.actedAt).toLocaleDateString('en-IN', {
-                                day: '2-digit',
-                                month: 'short',
-                                year: 'numeric',
-                                hour: '2-digit',
-                                minute: '2-digit',
-                              })
-                            : '—'}
-                        </td>
-                        <td className="cell-bold">{claim?.user?.name || '—'}</td>
-                        <td>{claim?.committee || '—'}</td>
-                        <td>{claim?.event || '—'}</td>
-                        <td className="cell-amount">
-                          ₹{claim?.amount ? claim.amount.toLocaleString('en-IN') : '0'}
-                        </td>
-                        <td>
-                          <span className={`status-badge ${record.status.toLowerCase()}`}>
-                            <span className="status-dot" />
-                            {record.status}
-                          </span>
-                        </td>
-                        <td style={{ maxWidth: '200px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={record.remark}>
-                          {record.remark || <span style={{ color: 'var(--text-muted)', fontStyle: 'italic' }}>No remark</span>}
-                        </td>
-                        <td style={{ textAlign: 'right' }}>
-                          <div className="action-btn-group">
-                            <button
-                              className="btn-action-icon"
-                              onClick={() => setSelectedClaim(claim)}
-                              title="View Details"
-                              id={`btn-view-${record.id}`}
-                            >
-                              <HiOutlineEye />
-                            </button>
-                            <button
-                              className="btn-action-icon"
-                              onClick={() => claim && openActivityLog(claim.id)}
-                              title="Activity Log"
-                              id={`btn-activity-${record.id}`}
-                            >
-                              <HiOutlineClipboardList />
-                            </button>
-                          </div>
-                        </td>
+            <>
+              {renderFilterBar()}
+              
+              {filteredHistory.length === 0 ? (
+                <div className="empty-state" style={{ padding: '40px 20px' }}>
+                  <HiOutlineClock className="empty-state-icon" style={{ color: 'var(--text-muted)' }} />
+                  <h3 className="empty-state-title">No matching history records</h3>
+                  <p className="empty-state-text">Try adjusting your search terms or filters.</p>
+                  <button className="btn-secondary" onClick={resetFilters} style={{ padding: '8px 16px', fontSize: '13px', margin: '12px auto 0 auto' }}>
+                    Reset Filters
+                  </button>
+                </div>
+              ) : (
+                <div className="claims-table-wrapper">
+                  <table className="claims-table">
+                    <thead>
+                      <tr>
+                        <th>Action Date</th>
+                        <th>Submitted By</th>
+                        <th>Committee</th>
+                        <th>Event</th>
+                        <th>Amount</th>
+                        <th>Your Action</th>
+                        <th>Your Remark</th>
+                        <th style={{ textAlign: 'right' }}>Details</th>
                       </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
+                    </thead>
+                    <tbody>
+                      {filteredHistory.map((record) => {
+                        const claim = record.reimbursement;
+                        return (
+                          <tr key={record.id}>
+                            <td>
+                              {record.actedAt
+                                ? new Date(record.actedAt).toLocaleDateString('en-IN', {
+                                    day: '2-digit',
+                                    month: 'short',
+                                    year: 'numeric',
+                                    hour: '2-digit',
+                                    minute: '2-digit',
+                                  })
+                                : '—'}
+                            </td>
+                            <td className="cell-bold">{claim?.user?.name || '—'}</td>
+                            <td>{claim?.committee || '—'}</td>
+                            <td>{claim?.event || '—'}</td>
+                            <td className="cell-amount">
+                              ₹{claim?.amount ? claim.amount.toLocaleString('en-IN') : '0'}
+                            </td>
+                            <td>
+                              <span className={`status-badge ${record.status.toLowerCase()}`}>
+                                <span className="status-dot" />
+                                {record.status}
+                              </span>
+                            </td>
+                            <td style={{ maxWidth: '200px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={record.remark}>
+                              {record.remark || <span style={{ color: 'var(--text-muted)', fontStyle: 'italic' }}>No remark</span>}
+                            </td>
+                            <td style={{ textAlign: 'right' }}>
+                              <div className="action-btn-group">
+                                <button
+                                  className="btn-action-icon"
+                                  onClick={() => setSelectedClaim(claim)}
+                                  title="View Details"
+                                  id={`btn-view-${record.id}`}
+                                >
+                                  <HiOutlineEye />
+                                </button>
+                                <button
+                                  className="btn-action-icon"
+                                  onClick={() => claim && openActivityLog(claim.id)}
+                                  title="Activity Log"
+                                  id={`btn-activity-${record.id}`}
+                                >
+                                  <HiOutlineClipboardList />
+                                </button>
+                              </div>
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </>
           )}
         </section>
       </main>

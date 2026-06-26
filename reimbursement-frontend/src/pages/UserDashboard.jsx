@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import { useDispatch, useSelector } from 'react-redux';
 import { useNavigate } from 'react-router-dom';
 import { logout } from '../store/authSlice';
@@ -42,6 +42,149 @@ function UserDashboard() {
   const [claims, setClaims] = useState([]);
   const [loading, setLoading] = useState(true);
   const [selectedClaim, setSelectedClaim] = useState(null);
+
+  // Search & Filter state
+  const [searchTerm, setSearchTerm] = useState('');
+  const [statusFilter, setStatusFilter] = useState('');
+  const [committeeFilter, setCommitteeFilter] = useState('');
+  const [minAmount, setMinAmount] = useState('');
+  const [maxAmount, setMaxAmount] = useState('');
+
+  const resetFilters = () => {
+    setSearchTerm('');
+    setStatusFilter('');
+    setCommitteeFilter('');
+    setMinAmount('');
+    setMaxAmount('');
+  };
+
+  // Dynamic list of unique committees for the filter dropdown
+  const committees = useMemo(() => {
+    const list = new Set();
+    claims.forEach((c) => {
+      if (c.committee) list.add(c.committee);
+    });
+    return Array.from(list).sort();
+  }, [claims]);
+
+  const filteredClaims = useMemo(() => {
+    return claims.filter((claim) => {
+      if (searchTerm.trim()) {
+        const term = searchTerm.toLowerCase().trim();
+        const matchesEvent = claim.event?.toLowerCase().includes(term);
+        const matchesCommittee = claim.committee?.toLowerCase().includes(term);
+        const matchesDesc = claim.description?.toLowerCase().includes(term);
+        const matchesAmount = String(claim.amount).includes(term);
+        if (!matchesEvent && !matchesCommittee && !matchesDesc && !matchesAmount) {
+          return false;
+        }
+      }
+
+      if (statusFilter && claim.status !== statusFilter) {
+        return false;
+      }
+
+      if (committeeFilter && claim.committee !== committeeFilter) {
+        return false;
+      }
+
+      if (minAmount.trim()) {
+        const minVal = parseFloat(minAmount);
+        if (!isNaN(minVal) && claim.amount < minVal) return false;
+      }
+
+      if (maxAmount.trim()) {
+        const maxVal = parseFloat(maxAmount);
+        if (!isNaN(maxVal) && claim.amount > maxVal) return false;
+      }
+
+      return true;
+    });
+  }, [claims, searchTerm, statusFilter, committeeFilter, minAmount, maxAmount]);
+
+  const renderFilterBar = () => (
+    <div style={{
+      display: 'flex',
+      flexWrap: 'wrap',
+      gap: '12px',
+      padding: '16px 20px',
+      backgroundColor: 'var(--bg-secondary)',
+      borderBottom: '1px solid var(--border-light)',
+      alignItems: 'center',
+      borderRadius: 'var(--radius-lg) var(--radius-lg) 0 0'
+    }}>
+      <div style={{ flex: '1 1 200px', position: 'relative' }}>
+        <input
+          type="text"
+          className="form-input"
+          style={{ paddingLeft: '14px', width: '100%', height: '38px', fontSize: '13.5px' }}
+          placeholder="Search by event, committee, description, amount..."
+          value={searchTerm}
+          onChange={(e) => setSearchTerm(e.target.value)}
+        />
+      </div>
+
+      <div style={{ minWidth: '130px' }}>
+        <select
+          className="form-select"
+          style={{ width: '100%', height: '38px', fontSize: '13px', padding: '0 12px' }}
+          value={statusFilter}
+          onChange={(e) => setStatusFilter(e.target.value)}
+        >
+          <option value="">All Statuses</option>
+          {Object.entries(STATUS_LABELS).map(([val, label]) => (
+            <option key={val} value={val}>{label}</option>
+          ))}
+        </select>
+      </div>
+
+      <div style={{ minWidth: '150px' }}>
+        <select
+          className="form-select"
+          style={{ width: '100%', height: '38px', fontSize: '13px', padding: '0 12px' }}
+          value={committeeFilter}
+          onChange={(e) => setCommitteeFilter(e.target.value)}
+        >
+          <option value="">All Committees</option>
+          {committees.map((comm) => (
+            <option key={comm} value={comm}>{comm}</option>
+          ))}
+        </select>
+      </div>
+
+      <div style={{ width: '100px' }}>
+        <input
+          type="number"
+          className="form-input"
+          style={{ paddingLeft: '10px', width: '100%', height: '38px', fontSize: '13px' }}
+          placeholder="Min ₹"
+          value={minAmount}
+          onChange={(e) => setMinAmount(e.target.value)}
+        />
+      </div>
+
+      <div style={{ width: '100px' }}>
+        <input
+          type="number"
+          className="form-input"
+          style={{ paddingLeft: '10px', width: '100%', height: '38px', fontSize: '13px' }}
+          placeholder="Max ₹"
+          value={maxAmount}
+          onChange={(e) => setMaxAmount(e.target.value)}
+        />
+      </div>
+
+      {(searchTerm || statusFilter || committeeFilter || minAmount || maxAmount) && (
+        <button
+          onClick={resetFilters}
+          className="btn-secondary"
+          style={{ padding: '8px 14px', height: '38px', fontSize: '13px', display: 'flex', alignItems: 'center', gap: '4px' }}
+        >
+          Clear
+        </button>
+      )}
+    </div>
+  );
 
   // Activity log modal state
   const [activityModal, setActivityModal] = useState({ open: false, claimId: null, logs: [], loading: false });
@@ -250,78 +393,93 @@ function UserDashboard() {
               </button>
             </div>
           ) : (
-            <div className="claims-table-wrapper">
-              <table className="claims-table">
-                <thead>
-                  <tr>
-                    <th>Date</th>
-                    <th>Committee</th>
-                    <th>Event</th>
-                    <th>Amount</th>
-                    <th>Status</th>
-                    <th style={{ textAlign: 'right' }}>Actions</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {claims.map((claim) => (
-                    <tr key={claim.id}>
-                      <td>{new Date(claim.createdAt).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })}</td>
-                      <td className="cell-bold">{claim.committee}</td>
-                      <td>{claim.event}</td>
-                      <td className="cell-amount">₹{claim.amount.toLocaleString('en-IN')}</td>
-                      <td>
-                        <span className={`status-badge ${claim.status.toLowerCase().replace('_', '-')}`}>
-                          <span className="status-dot" />
-                          {STATUS_LABELS[claim.status] || claim.status}
-                        </span>
-                      </td>
-                      <td style={{ textAlign: 'right' }}>
-                        <div className="action-btn-group">
-                          <button
-                            className="btn-action-icon"
-                            onClick={() => setSelectedClaim(claim)}
-                            title="View Details"
-                            id={`view-details-${claim.id}`}
-                          >
-                            <HiOutlineEye />
-                          </button>
-                          <button
-                            className="btn-action-icon"
-                            onClick={() => openActivityLog(claim.id)}
-                            title="Activity Log"
-                            id={`activity-log-${claim.id}`}
-                          >
-                            <HiOutlineClipboardList />
-                          </button>
-                          {claim.status === 'QUERY_RAISED' && (
-                            <button
-                              className="btn-action-approve"
-                              onClick={() => openResubmitModal(claim.id)}
-                              title="Resubmit"
-                              id={`resubmit-${claim.id}`}
-                            >
-                              <HiOutlineRefresh />
-                              Resubmit
-                            </button>
-                          )}
-                          {(claim.status === 'PENDING' || claim.status === 'QUERY_RAISED') && (
-                            <button
-                              className="btn-action-reject"
-                              onClick={() => openCancelModal(claim.id)}
-                              title="Cancel"
-                              id={`cancel-${claim.id}`}
-                            >
-                              <HiOutlineBan />
-                              Cancel
-                            </button>
-                          )}
-                        </div>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
+            <>
+              {renderFilterBar()}
+              
+              {filteredClaims.length === 0 ? (
+                <div className="empty-state" style={{ padding: '40px 20px' }}>
+                  <HiOutlineXCircle className="empty-state-icon" style={{ color: 'var(--text-muted)' }} />
+                  <h3 className="empty-state-title">No matching claims</h3>
+                  <p className="empty-state-text">Try adjusting your search terms or filters.</p>
+                  <button className="btn-secondary" onClick={resetFilters} style={{ padding: '8px 16px', fontSize: '13px', margin: '12px auto 0 auto' }}>
+                    Reset Filters
+                  </button>
+                </div>
+              ) : (
+                <div className="claims-table-wrapper">
+                  <table className="claims-table">
+                    <thead>
+                      <tr>
+                        <th>Date</th>
+                        <th>Committee</th>
+                        <th>Event</th>
+                        <th>Amount</th>
+                        <th>Status</th>
+                        <th style={{ textAlign: 'right' }}>Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {filteredClaims.map((claim) => (
+                        <tr key={claim.id}>
+                          <td>{new Date(claim.createdAt).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })}</td>
+                          <td className="cell-bold">{claim.committee}</td>
+                          <td>{claim.event}</td>
+                          <td className="cell-amount">₹{claim.amount.toLocaleString('en-IN')}</td>
+                          <td>
+                            <span className={`status-badge ${claim.status.toLowerCase().replace('_', '-')}`}>
+                              <span className="status-dot" />
+                              {STATUS_LABELS[claim.status] || claim.status}
+                            </span>
+                          </td>
+                          <td style={{ textAlign: 'right' }}>
+                            <div className="action-btn-group">
+                              <button
+                                className="btn-action-icon"
+                                onClick={() => setSelectedClaim(claim)}
+                                title="View Details"
+                                id={`view-details-${claim.id}`}
+                              >
+                                <HiOutlineEye />
+                              </button>
+                              <button
+                                className="btn-action-icon"
+                                onClick={() => openActivityLog(claim.id)}
+                                title="Activity Log"
+                                id={`activity-log-${claim.id}`}
+                              >
+                                <HiOutlineClipboardList />
+                              </button>
+                              {claim.status === 'QUERY_RAISED' && (
+                                <button
+                                  className="btn-action-approve"
+                                  onClick={() => openResubmitModal(claim.id)}
+                                  title="Resubmit"
+                                  id={`resubmit-${claim.id}`}
+                                >
+                                  <HiOutlineRefresh />
+                                  Resubmit
+                                </button>
+                              )}
+                              {(claim.status === 'PENDING' || claim.status === 'QUERY_RAISED') && (
+                                <button
+                                  className="btn-action-reject"
+                                  onClick={() => openCancelModal(claim.id)}
+                                  title="Cancel"
+                                  id={`cancel-${claim.id}`}
+                                >
+                                  <HiOutlineBan />
+                                  Cancel
+                                </button>
+                              )}
+                            </div>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </>
           )}
         </section>
       </main>
