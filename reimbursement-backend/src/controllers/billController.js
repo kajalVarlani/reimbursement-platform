@@ -41,11 +41,46 @@ const uploadToCloudinary = (fileBuffer, mimetype) => {
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
 /**
+ * Layer 1 — Normalize vendor name aggressively.
+ *
+ * - Lowercases everything.
+ * - Strips all non-alphanumeric characters (spaces, punctuation, etc.).
+ * - Removes common legal suffixes (ltd, limited, pvt) so that
+ *   "Reliance Fresh Pvt Ltd", "reliance-fresh", and "RELIANCE FRESH"
+ *   all collapse to the same token: "reliancefresh".
+ */
+function normalizeVendor(name) {
+  if (!name) return "";
+  return name
+    .toLowerCase()
+    .replace(/[^a-z0-9]/g, "")       // strip all non-alphanumeric chars first
+    .replace(/(pvt|ltd|limited)+$/g, ""); // remove legal suffixes only at the END
+                                          // e.g. "pvtechno" is NOT affected,
+                                          // but "tataltd" → "tata"
+}
+
+/**
+ * Layer 1 — Normalize invoice number aggressively.
+ *
+ * - Lowercases everything.
+ * - Strips spaces, dashes, slashes, and all other non-alphanumeric chars
+ *   so that "INV-123", "INV 123", and "inv/123" all become "inv123".
+ */
+function normalizeInvoice(invoice) {
+  if (!invoice) return "";
+  return invoice
+    .toLowerCase()
+    .replace(/[^a-z0-9]/g, "");
+}
+
+/**
  * Build a uniqueIdentifier from bill metadata.
  *
  * Priority:
  *   1. transactionId              → "txn:<id>"
  *   2. invoiceNumber OR vendorName → "inv:<vendor>|<invoice>|<date>|<amount>"
+ *      Fields are normalized (Layer 1) before joining so minor formatting
+ *      differences in the same real-world bill produce the same identifier.
  *   3. No identifiable metadata   → "uniq:<uuid>"  (never deduplicates)
  *
  * Requiring at least one of transactionId / invoiceNumber / vendorName
@@ -53,22 +88,26 @@ const uploadToCloudinary = (fileBuffer, mimetype) => {
  * incorrectly merged into the same Bill record.
  */
 function buildUniqueIdentifier({ vendorName, invoiceNumber, billDate, amount, transactionId }) {
+  // ── Layer 1a: transactionId takes highest priority (already a unique key) ──
   if (transactionId) return `txn:${transactionId.trim()}`;
 
-  const hasInvoice = invoiceNumber && invoiceNumber.trim() !== "";
-  const hasVendor = vendorName && vendorName.trim() !== "";
+  // ── Layer 1b: normalize vendor + invoice before deciding if we have data ──
+  const normVendor  = normalizeVendor(vendorName);
+  const normInvoice = normalizeInvoice(invoiceNumber);
 
-  if (!hasInvoice && !hasVendor) {
+  if (!normVendor && !normInvoice) {
     // No meaningful metadata — generate a one-time UUID so this bill is
     // never accidentally deduplicated with any other bill.
     return `uniq:${randomUUID()}`;
   }
 
+  // ── Layer 2: exact duplicate match on normalized fields ──────────────────
+  const parsedAmount = Number(amount);
   const parts = [
-    (vendorName || "").trim().toLowerCase(),
-    (invoiceNumber || "").trim().toLowerCase(),
+    normVendor,
+    normInvoice,
     billDate ? new Date(billDate).toISOString().slice(0, 10) : "",
-    String(amount),
+    isNaN(parsedAmount) ? "" : parsedAmount.toFixed(2),
   ];
   return `inv:${parts.join("|")}`;
 }
