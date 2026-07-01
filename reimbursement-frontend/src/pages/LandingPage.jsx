@@ -58,18 +58,18 @@ function LandingPage() {
       {/* ── Nav bar ── */}
       <header className="landing-nav">
         <div className="landing-nav-brand">
-          <TbFileInvoice />
-          <span>ReimbursePortal</span>
+          <img src="/infernxt-logo.png" alt="inferNXT" className="brand-logo brand-logo-company" />
+        </div>
+        <div className="landing-nav-logo-right">
+          <img src="/claimnest-logo-clean.png" alt="ClaimNest" className="brand-logo brand-logo-product" />
         </div>
       </header>
+
 
       {/* ── Hero ── */}
       <main className="landing-main">
         <section className="landing-hero animate-fade-in-up">
-          <div className="landing-hero-badge">
-            <span className="hero-badge-dot" />
-            Streamlined · Transparent · Fast
-          </div>
+
           <h1 className="landing-hero-title">
             Reimbursement,<br />
             <span className="landing-hero-accent">reimagined.</span>

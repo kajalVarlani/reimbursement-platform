@@ -32,20 +32,27 @@ function AdminForgotPassword() {
   };
 
   return (
-    <div className="login-page">
-      {/* ── Left Branding Panel ── */}
-      <div className="login-brand-panel admin-panel">
-        <div className="brand-orb brand-orb-1" />
-        <div className="brand-orb brand-orb-2" />
-        <div className="brand-orb brand-orb-3" />
+    <div className="login-page-container">
+      <header className="landing-nav">
+        <div className="landing-nav-brand" style={{ cursor: 'pointer' }} onClick={() => navigate('/')}>
+          <img src="/infernxt-logo.png" alt="inferNXT" className="brand-logo brand-logo-company" />
+        </div>
+        <div className="landing-nav-logo-right" onClick={() => navigate('/')}>
+          <img src="/claimnest-logo-clean.png" alt="ClaimNest" className="brand-logo brand-logo-product" />
+        </div>
+      </header>
 
-        <div className="brand-content">
-          <div className="brand-icon-wrapper">
-            <HiOutlineShieldCheck />
-          </div>
-          <h1 className="brand-title">
-            Admin<br />Control Center
-          </h1>
+      <div className="login-page">
+        {/* ── Left Branding Panel ── */}
+        <div className="login-brand-panel admin-panel">
+          <div className="brand-orb brand-orb-1" />
+          <div className="brand-orb brand-orb-2" />
+          <div className="brand-orb brand-orb-3" />
+
+          <div className="brand-content">
+            <h1 className="brand-title">
+              Admin<br />Control Center
+            </h1>
           <p className="brand-subtitle">
             Manage approvals, users, and reimbursement workflows from a single, powerful dashboard.
           </p>
@@ -135,6 +142,7 @@ function AdminForgotPassword() {
         </div>
       </div>
     </div>
+  </div>
   );
 }
 

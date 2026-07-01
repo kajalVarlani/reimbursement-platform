@@ -222,10 +222,10 @@ function SubmitReimbursement() {
       {/* ── Header ── */}
       <header className="dashboard-header">
         <div className="header-brand" onClick={() => navigate('/dashboard')} style={{ cursor: 'pointer' }}>
-          <TbFileInvoice />
-          <span>Reimbursement Portal</span>
+          <img src="/infernxt-logo.png" alt="inferNXT" className="brand-logo brand-logo-company" />
         </div>
         <div className="header-user-actions">
+          <img src="/claimnest-logo-clean.png" alt="ClaimNest" className="brand-logo brand-logo-product" />
           <div className="user-profile-badge">
             <div className="avatar-circle">
               {user?.name ? user.name.charAt(0).toUpperCase() : 'U'}
@@ -238,6 +238,7 @@ function SubmitReimbursement() {
           </button>
         </div>
       </header>
+
 
       {/* ── Main Form Area ── */}
       <main className="dashboard-main animate-fade-in-up">
