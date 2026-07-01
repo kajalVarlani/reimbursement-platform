@@ -286,10 +286,10 @@ function UserDashboard() {
       {/* ── Header ── */}
       <header className="dashboard-header">
         <div className="header-brand">
-          <TbFileInvoice />
-          <span>Reimbursement Portal</span>
+          <img src="/infernxt-logo.png" alt="inferNXT" className="brand-logo brand-logo-company" />
         </div>
         <div className="header-user-actions">
+          <img src="/claimnest-logo-clean.png" alt="ClaimNest" className="brand-logo brand-logo-product" />
           <div className="user-profile-badge">
             <div className="avatar-circle">
               {user?.name ? user.name.charAt(0).toUpperCase() : 'U'}
@@ -302,6 +302,7 @@ function UserDashboard() {
           </button>
         </div>
       </header>
+
 
       {/* ── Main Panel ── */}
       <main className="dashboard-main animate-fade-in">

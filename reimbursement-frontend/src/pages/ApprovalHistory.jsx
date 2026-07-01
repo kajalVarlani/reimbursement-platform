@@ -217,10 +217,10 @@ function ApprovalHistory() {
       {/* ── Header ── */}
       <header className="dashboard-header">
         <div className="header-brand" style={{ cursor: 'pointer' }} onClick={() => navigate('/admin/dashboard')}>
-          <TbFileInvoice />
-          <span>Reimbursement Portal</span>
+          <img src="/infernxt-logo.png" alt="inferNXT" className="brand-logo brand-logo-company" />
         </div>
         <div className="header-user-actions">
+          <img src="/claimnest-logo-clean.png" alt="ClaimNest" className="brand-logo brand-logo-product" />
           <button
             className="btn-secondary"
             style={{ padding: '8px 16px', fontSize: '13px', display: 'flex', alignItems: 'center', gap: '6px' }}
@@ -257,6 +257,7 @@ function ApprovalHistory() {
           </button>
         </div>
       </header>
+
 
       {/* ── Main ── */}
       <main className="dashboard-main animate-fade-in">

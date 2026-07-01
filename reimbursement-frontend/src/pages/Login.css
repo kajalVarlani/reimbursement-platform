@@ -2,8 +2,18 @@
    Login Pages – Shared Styles
    ═══════════════════════════════════════════ */
 
-.login-page {
+.login-page-container {
+  display: flex;
+  flex-direction: column;
   min-height: 100vh;
+}
+
+.login-page-container .landing-nav {
+  flex-shrink: 0;
+}
+
+.login-page {
+  flex-grow: 1;
   display: flex;
   position: relative;
   overflow: hidden;
@@ -96,6 +106,45 @@
   color: var(--wc-100);
   font-size: 28px;
 }
+
+/* ── Dual-logo layout for brand panel ── */
+.brand-logos-row {
+  display: inline-flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 32px;
+}
+
+.brand-logo {
+  display: block;
+  object-fit: contain;
+  flex-shrink: 0;
+}
+
+.brand-logo-company {
+  height: 30px;
+  width: auto;
+}
+
+.brand-logo-product {
+  height: 30px;
+  width: auto;
+}
+
+.brand-logo-divider {
+  width: 1px;
+  height: 18px;
+  background: rgba(11, 62, 51, 0.18);
+  border-radius: 2px;
+  flex-shrink: 0;
+}
+
+/* ── Nav logo right (claimNest) ── */
+.nav-logo-right {
+  display: flex;
+  align-items: center;
+}
+
 
 .brand-title {
   font-size: 42px;
@@ -605,6 +654,12 @@
 .landing-nav-brand svg {
   font-size: 26px;
   color: var(--wc-300);
+}
+
+.landing-nav-logo-right {
+  display: flex;
+  align-items: center;
+  cursor: pointer;
 }
 
 /* ── Main Content ── */

@@ -11,16 +11,17 @@
 
 /* ── Navigation Header ── */
 .dashboard-header {
-  background: var(--bg-secondary);
+  background: rgba(240, 248, 250, 0.85);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
   border-bottom: 1px solid var(--border-light);
-  padding: 16px 40px;
+  padding: 22px 48px;
   display: flex;
   justify-content: space-between;
   align-items: center;
   position: sticky;
   top: 0;
   z-index: 100;
-  box-shadow: var(--shadow-sm);
 }
 
 .header-brand {
@@ -36,6 +37,32 @@
   font-size: 24px;
   color: var(--wc-300);
 }
+
+/* ── Dual-logo layout (inferNXT + ClaimNest) ── */
+.brand-logo {
+  display: block;
+  object-fit: contain;
+  flex-shrink: 0;
+}
+
+.brand-logo-company {
+  height: 30px;
+  width: auto;
+}
+
+.brand-logo-product {
+  height: 30px;
+  width: auto;
+}
+
+.brand-logo-divider {
+  width: 1px;
+  height: 18px;
+  background: var(--border-default, rgba(0, 0, 0, 0.15));
+  border-radius: 2px;
+  flex-shrink: 0;
+}
+
 
 .header-user-actions {
   display: flex;
