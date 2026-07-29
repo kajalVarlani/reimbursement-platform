@@ -10,14 +10,7 @@ const approvalRoutes = require("./routes/approvalRoutes");
 
 const app = express();
 
-app.use(cors({
-    origin: [
-        "http://localhost:5173",
-        "http://localhost:3000",
-        "https://claimnestdau.netlify.app",
-    ],
-    credentials: true,
-}));
+app.use(cors());
 app.use(express.json());
 
 // Admin Routes
