@@ -12,8 +12,27 @@ datasource db {
 // ─────────────────────────────────────────────
 
 enum AdminRole {
-  SUPER_ADMIN
-  ADMINISTRATOR
+  SUPER_ADMIN     // Treasurer
+  FACULTY_MENTOR  // Designated Club Faculty Mentor
+  DEAN_STUDENTS   // Dean Students (Final Sanctioning Authority)
+  ACCOUNTANT      // Central University Finance / Accountant
+  ADMINISTRATOR   // General Admin
+}
+
+enum UserDesignation {
+  CONVENOR
+  DEPUTY_CONVENOR
+}
+
+enum PayoutRecipientType {
+  STUDENT
+  VENDOR
+  CLUB_ACCOUNT
+}
+
+enum PaymentMode {
+  BANK_TRANSFER
+  UPI
 }
 
 enum ReimbursementStatus {
@@ -24,11 +43,37 @@ enum ReimbursementStatus {
   CANCELLED
 }
 
+enum ReimbursementStage {
+  FACULTY_MENTOR
+  TREASURER
+  ACCOUNTANT_REVIEW
+  DEAN_STUDENTS
+  AWAITING_PAYMENT
+  COMPLETED
+  REJECTED
+}
+
 enum ApprovalStatus {
   PENDING
   APPROVED
   REJECTED
   QUERY_RAISED
+}
+
+enum BufferTxType {
+  MONTHLY_REPLENISHMENT
+  TOP_UP
+  REIMBURSEMENT_PAYOUT
+  REVERSAL
+}
+
+enum ProjectionStatus {
+  SUBMITTED
+  REVIEWED
+  ACCEPTED
+  APPROVED
+  REJECTED
+  EXHAUSTED
 }
 
 /// Who performed the activity — either a User or an Administrator.
@@ -57,20 +102,40 @@ enum ActivityAction {
 // ─────────────────────────────────────────────
 
 model User {
-  id               String          @id @default(cuid())
+  id               String              @id @default(cuid())
 
   name             String
-  email            String          @unique
+  email            String              @unique
   password         String
+
+  designation      UserDesignation?
+  clubName         String?
 
   resetToken       String?
   resetTokenExpiry DateTime?
 
   reimbursements   Reimbursement[]
+  projections      MonthlyProjection[]
   activityLogs     ActivityLog[]
 
-  createdAt        DateTime        @default(now())
-  updatedAt        DateTime        @updatedAt
+  createdAt        DateTime            @default(now())
+  updatedAt        DateTime            @updatedAt
+
+  @@index([clubName])
+}
+
+model ClubMentorMapping {
+  id              String        @id @default(cuid())
+
+  clubName        String        @unique // e.g. "Music Club", "Chess Club"
+
+  facultyMentorId String
+  facultyMentor   Administrator @relation("ClubFacultyMentor", fields: [facultyMentorId], references: [id])
+
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+
+  @@index([facultyMentorId])
 }
 
 model Position {
@@ -100,6 +165,7 @@ model Administrator {
   positionId       String?
   position         Position?               @relation(fields: [positionId], references: [id])
 
+  mentoredClubs    ClubMentorMapping[]     @relation("ClubFacultyMentor")
   approvals        ReimbursementApproval[]
   activityLogs     ActivityLog[]
 
@@ -107,32 +173,184 @@ model Administrator {
   updatedAt        DateTime                @updatedAt
 }
 
-model Reimbursement {
-  id              String                  @id @default(cuid())
+model TreasurerBuffer {
+  id             String              @id @default(cuid())
 
-  committee       String
-  event           String
+  monthlyAdvance Float               @default(50000.0) // Monthly allocation (₹50,000)
+  currentBalance Float               @default(50000.0) // Current available balance
+  currentMonth   String              // e.g. "2026-09"
 
+  transactions   BufferTransaction[]
+
+  updatedAt      DateTime            @updatedAt
+}
+
+model BufferTransaction {
+  id              String          @id @default(cuid())
+
+  bufferId        String
+  buffer          TreasurerBuffer @relation(fields: [bufferId], references: [id])
+
+  type            BufferTxType
   amount          Float
-  description     String?
+  balanceAfter    Float
 
-  status          ReimbursementStatus     @default(PENDING)
+  reimbursementId String?
+  notes           String?
 
-  currentPriority Int                     @default(1)
+  createdAt       DateTime        @default(now())
 
-  /// Whether the reimbursement has been paid out.
-  isPaid          Boolean                 @default(false)
-  paidAt          DateTime?
+  @@index([bufferId])
+  @@index([reimbursementId])
+}
 
-  userId          String
-  user            User                    @relation(fields: [userId], references: [id])
+/// Per-club budget allocation set manually by the Treasurer for a given month.
+/// When a reimbursement is marked as paid, spentAmount is incremented.
+model ClubBudget {
+  id              String   @id @default(cuid())
 
-  approvals       ReimbursementApproval[]
-  bills           ReimbursementBill[]
-  activityLogs    ActivityLog[]
+  clubName        String   // e.g. "Music Club", "Chess Club"
+  targetMonth     String   // e.g. "2026-09"
 
-  createdAt       DateTime                @default(now())
-  updatedAt       DateTime                @updatedAt
+  allocatedAmount Float    @default(0) // Budget sanctioned by Treasurer
+  spentAmount     Float    @default(0) // Total paid reimbursements from this club
+
+  notes           String?
+
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@unique([clubName, targetMonth])
+  @@index([clubName])
+  @@index([targetMonth])
+}
+
+model ProjectionWindow {
+  id               String              @id @default(cuid())
+
+  cycleName        String?             // e.g. "Autumn Fest Cycle (45 Days)"
+  targetMonth      String              @unique // Unique cycle key or month (e.g. "2026-10" or "CYCLE-45D-OCT26")
+  startDate        DateTime?
+  endDate          DateTime?
+  durationDays     Int?                @default(45)
+  deadline         DateTime
+  bufferAmount     Float               @default(100000.0) // Advance buffer pool for this cycle
+  usedBufferAmount Float               @default(0.0)      // Total amount reserved by auto-approved projections
+  instructions     String?
+  isActive         Boolean             @default(true)
+
+  projections      MonthlyProjection[]
+
+  createdAt        DateTime            @default(now())
+  updatedAt        DateTime            @updatedAt
+}
+
+model MonthlyProjection {
+  id                   String           @id @default(cuid())
+
+  clubName             String           // e.g. "Music Club"
+  targetMonth          String           // e.g. "2026-10"
+  cycleId              String?
+  cycle                ProjectionWindow? @relation(fields: [cycleId], references: [id])
+  totalEstimatedAmount Float            @default(0.0)
+  spentAmount          Float            @default(0.0) // Claims processed against this projection
+  status               ProjectionStatus @default(APPROVED)
+  isAutoApproved       Boolean          @default(true)
+
+  submittedById        String
+  submittedBy          User             @relation(fields: [submittedById], references: [id])
+
+  items                ProjectionItem[]
+  treasurerRemarks     String?
+
+  createdAt            DateTime         @default(now())
+  updatedAt            DateTime         @updatedAt
+
+  @@unique([clubName, targetMonth])
+}
+
+model ProjectionItem {
+  id             String            @id @default(cuid())
+
+  projectionId   String
+  projection     MonthlyProjection @relation(fields: [projectionId], references: [id], onDelete: Cascade)
+
+  eventName      String
+  expectedAmount Float
+  description    String?
+  tentativeDate  DateTime?
+
+  createdAt      DateTime          @default(now())
+
+  @@index([projectionId])
+}
+
+model Reimbursement {
+  id                  String                  @id @default(cuid())
+
+  committee           String                  // Club / Committee name
+  event               String                  // Event name
+
+  amount              Float
+  description         String?
+
+  status              ReimbursementStatus     @default(PENDING)
+
+  currentStage        ReimbursementStage      @default(FACULTY_MENTOR)
+  currentPriority     Int                     @default(1) // 1: Faculty, 2: Treasurer/Accountant, 3: Dean Students
+
+  // Specific Faculty Mentor assigned
+  assignedFacultyId   String?
+
+  // Buffer & Accountant Escalation
+  withinBuffer        Boolean                 @default(true)
+  routedToAccountant  Boolean                 @default(false)
+  accountantReason    String?
+  paidFromBuffer      Boolean                 @default(false)
+
+  // Payout Recipient Details (Provided by C/DC; Student or Vendor)
+  recipientType       PayoutRecipientType     @default(STUDENT)
+  beneficiaryName     String?
+  paymentMode         PaymentMode             @default(BANK_TRANSFER)
+  bankName            String?
+  accountNumber       String?
+  ifscCode            String?
+  upiId               String?
+
+  // Manual Payment Mark-off Details
+  isPaid              Boolean                 @default(false)
+  paidAt              DateTime?
+  paidByAdminId       String?
+  paymentReference    String?                 // Transaction Ref ID / UTR
+  paymentProofUrl     String?
+
+  // Accountant Payment Details (Two-step payout for Post-Event / Accountant flow)
+  accountantPaid          Boolean                 @default(false)
+  accountantPaidAt        DateTime?
+  accountantPaidByAdminId String?
+  accountantPaymentRef    String?                 // UTR or Bank Reference from Accountant
+  accountantProofUrl      String?
+  accountantNotes         String?
+
+  // Advance vs Post-Event Type & Digital Signatures
+  claimType               String                  @default("ADVANCE") // "ADVANCE" or "POST_EVENT"
+  projectionId            String?
+  submissionSignatureUrl  String?
+  submissionSignatureHash String?
+  submissionSignedAt      DateTime?
+
+  userId              String
+  user                User                    @relation(fields: [userId], references: [id])
+
+  approvals           ReimbursementApproval[]
+  bills               ReimbursementBill[]
+  activityLogs        ActivityLog[]
+
+  createdAt           DateTime                @default(now())
+  updatedAt           DateTime                @updatedAt
+
+  @@index([committee])
+  @@index([currentStage])
 }
 
 model Bill {
@@ -174,14 +392,6 @@ model ReimbursementBill {
   billId          String
   bill            Bill          @relation(fields: [billId], references: [id])
 
-  /**
-   * Amount from this bill allocated to this reimbursement.
-   *
-   * Example:
-   * Bill = ₹10,000
-   * Reimbursement A = ₹6,000
-   * Reimbursement B = ₹4,000
-   */
   allocatedAmount Float
 
   createdAt       DateTime      @default(now())
@@ -204,10 +414,20 @@ model ReimbursementApproval {
 
   remark          String?
 
+  // Digital Signature Fields
+  signatureImageUrl String?
+  signatureHash     String?
+  signerName        String?
+  signerRole        String?
+  signerEmail       String?
+
   actedAt         DateTime?
 
   createdAt       DateTime      @default(now())
   updatedAt       DateTime      @updatedAt
+
+  @@index([reimbursementId])
+  @@index([administratorId])
 }
 
 /// Immutable audit trail for every significant event on a reimbursement.
@@ -235,9 +455,6 @@ model ActivityLog {
   administratorId String?
   administrator   Administrator? @relation(fields: [administratorId], references: [id])
 
-  /// Role of the actor at the time of the action (e.g. "SUPER_ADMIN",
-  /// "ADMINISTRATOR", position name, or "USER"). Stored as a plain string so
-  /// historical entries remain accurate even if the actor's role changes later.
   actorRole       String
 
   createdAt       DateTime       @default(now())

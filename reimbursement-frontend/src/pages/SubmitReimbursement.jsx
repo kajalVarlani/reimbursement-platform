@@ -1,8 +1,8 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useSelector, useDispatch } from 'react-redux';
 import { logout } from '../store/authSlice';
-import { createReimbursement } from '../services/reimbursementService';
+import { createReimbursement, getMyClubBudget } from '../services/reimbursementService';
 import {
   HiOutlineUpload,
   HiOutlineChevronLeft,
@@ -14,6 +14,7 @@ import {
 } from 'react-icons/hi';
 import { TbFileInvoice } from 'react-icons/tb';
 import toast, { Toaster } from 'react-hot-toast';
+import SignaturePadModal from '../components/SignaturePadModal';
 import './Dashboard.css';
 
 const COMMITTEES = [
@@ -37,10 +38,34 @@ function SubmitReimbursement() {
     toast.success('Logged out successfully');
   };
 
-  const [committee, setCommittee] = useState('');
+  // Pre-fill committee from user's club if assigned
+  const [committee, setCommittee] = useState(user?.clubName || '');
   const [event, setEvent] = useState('');
   const [description, setDescription] = useState('');
   const [submitting, setSubmitting] = useState(false);
+  const [showSignatureModal, setShowSignatureModal] = useState(false);
+
+  // Payout recipient details
+  const [recipientType, setRecipientType] = useState('STUDENT');
+  const [beneficiaryName, setBeneficiaryName] = useState('');
+  const [paymentMode, setPaymentMode] = useState('BANK_TRANSFER');
+  const [bankName, setBankName] = useState('');
+  const [accountNumber, setAccountNumber] = useState('');
+  const [ifscCode, setIfscCode] = useState('');
+  const [upiId, setUpiId] = useState('');
+
+  // Club budget state for Convenors / Deputy Convenors
+  const [clubBudget, setClubBudget] = useState(null);
+
+  useEffect(() => {
+    getMyClubBudget()
+      .then((data) => {
+        if (data && data.hasBudget) {
+          setClubBudget(data);
+        }
+      })
+      .catch(() => {});
+  }, []);
 
   // Multiple bills state
   const [bills, setBills] = useState([
@@ -140,7 +165,7 @@ function SubmitReimbursement() {
     return sum + (isNaN(amt) ? 0 : amt);
   }, 0);
 
-  const handleSubmit = async (e) => {
+  const handleSubmit = (e) => {
     e.preventDefault();
     if (!committee || !event) {
       toast.error('Committee and Event are required');
@@ -174,8 +199,13 @@ function SubmitReimbursement() {
       }
     }
 
+    // Open signature modal for convenor digital sign-off
+    setShowSignatureModal(true);
+  };
+
+  const handleSignedSubmit = async (signatureDataUrl) => {
     setSubmitting(true);
-    const toastId = toast.loading('Submitting reimbursement claim…');
+    const toastId = toast.loading('Submitting reimbursement claim with cryptographic seal…');
 
     try {
       const formData = new FormData();
@@ -183,6 +213,23 @@ function SubmitReimbursement() {
       formData.append('event', event);
       formData.append('description', description);
       formData.append('amount', totalReimbursementAmount.toString());
+
+      // Payout recipient details
+      formData.append('recipientType', recipientType);
+      if (beneficiaryName.trim()) formData.append('beneficiaryName', beneficiaryName.trim());
+      formData.append('paymentMode', paymentMode);
+      if (paymentMode === 'UPI') {
+        if (upiId.trim()) formData.append('upiId', upiId.trim());
+      } else {
+        if (bankName.trim()) formData.append('bankName', bankName.trim());
+        if (accountNumber.trim()) formData.append('accountNumber', accountNumber.trim());
+        if (ifscCode.trim()) formData.append('ifscCode', ifscCode.trim());
+      }
+
+      // Convenor digital signature canvas data URL
+      if (signatureDataUrl) {
+        formData.append('signatureImageUrl', signatureDataUrl);
+      }
 
       // Prepare metadata for bills (removing file/drag drop states)
       const billsMetadata = bills.map((bill) => ({
@@ -202,7 +249,8 @@ function SubmitReimbursement() {
 
       await createReimbursement(formData);
 
-      toast.success('Reimbursement claim submitted successfully!', { id: toastId });
+      setShowSignatureModal(false);
+      toast.success('Claim submitted & digitally signed with HMAC-SHA256 seal!', { id: toastId });
       setTimeout(() => navigate('/dashboard'), 1500);
     } catch (err) {
       console.error(err);
@@ -256,30 +304,81 @@ function SubmitReimbursement() {
         </div>
 
         <div className="form-card">
-          <div className="login-form-header" style={{ marginBottom: '28px' }}>
+          <div className="login-form-header" style={{ marginBottom: '24px' }}>
             <h2 className="login-form-title" style={{ fontSize: '24px' }}>Submit Claim</h2>
             <p className="login-form-subtitle">Create a new reimbursement request. Add one or multiple bills with their details.</p>
           </div>
+
+          {clubBudget?.hasBudget && (
+            <div
+              id="submit-club-budget-banner"
+              style={{
+                background: 'var(--bg-secondary)',
+                border: '1px solid var(--border-light)',
+                borderRadius: 'var(--radius-md)',
+                padding: '14px 18px',
+                marginBottom: '24px',
+                display: 'flex',
+                flexDirection: 'column',
+                gap: '8px',
+              }}
+            >
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '8px' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  <TbFileInvoice style={{ fontSize: '20px', color: 'var(--wc-300)' }} />
+                  <span style={{ fontSize: '13.5px', fontWeight: 700, color: 'var(--text-primary)' }}>
+                    {clubBudget.clubName} Budget ({clubBudget.targetMonth})
+                  </span>
+                </div>
+                <div style={{ display: 'flex', gap: '16px', alignItems: 'center', flexWrap: 'wrap' }}>
+                  <span style={{ fontSize: '12.5px', color: 'var(--text-secondary)' }}>
+                    Allocated: <strong>₹{clubBudget.allocatedAmount?.toLocaleString('en-IN')}</strong>
+                  </span>
+                  <span style={{ fontSize: '12.5px', color: 'var(--text-secondary)' }}>
+                    Disbursed: <strong>₹{clubBudget.spentAmount?.toLocaleString('en-IN')}</strong>
+                  </span>
+                  <span style={{ fontSize: '13px', fontWeight: 700, color: clubBudget.remainingAmount < 1000 ? '#ef4444' : '#10b981' }}>
+                    Available: ₹{clubBudget.remainingAmount?.toLocaleString('en-IN')}
+                  </span>
+                </div>
+              </div>
+
+              {totalReimbursementAmount > clubBudget.remainingAmount && (
+                <div style={{ fontSize: '12px', color: '#f59e0b', fontWeight: 600, background: 'rgba(245, 158, 11, 0.1)', border: '1px solid rgba(245, 158, 11, 0.25)', padding: '8px 12px', borderRadius: '6px' }}>
+                  ℹ️ <strong>Post-Event Accountant Flow:</strong> Current total claim (₹{totalReimbursementAmount.toLocaleString('en-IN')}) exceeds your club's remaining sanctioned budget (₹{clubBudget.remainingAmount.toLocaleString('en-IN')}). As per protocol, this claim will automatically route to the Central Accountant for verification after Dean sanction.
+                </div>
+              )}
+            </div>
+          )}
 
           <form className="reimbursement-form" onSubmit={handleSubmit} id="submit-reimbursement-form">
             <div className="form-row-grid">
               {/* Committee selection */}
               <div className="form-group">
                 <label className="form-label" htmlFor="select-committee">
-                  Committee
+                  Club / Committee
                 </label>
-                <select
-                  id="select-committee"
-                  className="form-select"
-                  value={committee}
-                  onChange={(e) => setCommittee(e.target.value)}
-                  required
-                >
-                  <option value="" disabled>Select Committee</option>
-                  {COMMITTEES.map((comm) => (
-                    <option key={comm} value={comm}>{comm}</option>
-                  ))}
-                </select>
+                {user?.clubName ? (
+                  <input
+                    id="select-committee"
+                    className="form-input"
+                    style={{ paddingLeft: '14px', background: 'var(--bg-secondary)' }}
+                    type="text"
+                    value={committee}
+                    readOnly
+                  />
+                ) : (
+                  <input
+                    id="select-committee"
+                    className="form-input"
+                    style={{ paddingLeft: '14px' }}
+                    type="text"
+                    placeholder="Enter your club / committee name"
+                    value={committee}
+                    onChange={(e) => setCommittee(e.target.value)}
+                    required
+                  />
+                )}
               </div>
 
               {/* Event Name */}
@@ -508,6 +607,122 @@ function SubmitReimbursement() {
               </button>
             </div>
 
+            {/* ── Payout Recipient Details ── */}
+            <div style={{ marginTop: '32px', marginBottom: '24px' }}>
+              <h3 style={{ fontSize: '18px', fontWeight: 700, marginBottom: '6px' }}>Payout Details</h3>
+              <p style={{ fontSize: '13px', color: 'var(--text-muted)', marginBottom: '18px' }}>
+                Provide the bank account or UPI details where the reimbursed amount should be transferred.
+                This can be your personal account, a vendor's account, or the club's account.
+              </p>
+              <div className="form-row-grid">
+                <div className="form-group">
+                  <label className="form-label" htmlFor="payout-recipient-type">Recipient Type</label>
+                  <select
+                    id="payout-recipient-type"
+                    className="form-select"
+                    value={recipientType}
+                    onChange={(e) => setRecipientType(e.target.value)}
+                  >
+                    <option value="STUDENT">Student</option>
+                    <option value="VENDOR">Vendor</option>
+                    <option value="CLUB_ACCOUNT">Club Account</option>
+                  </select>
+                </div>
+                <div className="form-group">
+                  <label className="form-label" htmlFor="payout-beneficiary">Beneficiary Name</label>
+                  <input
+                    id="payout-beneficiary"
+                    className="form-input"
+                    style={{ paddingLeft: '14px' }}
+                    type="text"
+                    placeholder="Full name of payee / vendor"
+                    value={beneficiaryName}
+                    onChange={(e) => setBeneficiaryName(e.target.value)}
+                  />
+                </div>
+              </div>
+              <div className="form-group" style={{ marginBottom: '16px' }}>
+                <label className="form-label">Payment Mode</label>
+                <div style={{ display: 'flex', gap: '16px', marginTop: '8px' }}>
+                  <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer', fontSize: '14px', fontWeight: 500 }}>
+                    <input
+                      type="radio"
+                      name="paymentMode"
+                      value="BANK_TRANSFER"
+                      checked={paymentMode === 'BANK_TRANSFER'}
+                      onChange={() => setPaymentMode('BANK_TRANSFER')}
+                      style={{ accentColor: 'var(--wc-300)', width: '16px', height: '16px' }}
+                    />
+                    Bank Transfer
+                  </label>
+                  <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer', fontSize: '14px', fontWeight: 500 }}>
+                    <input
+                      type="radio"
+                      name="paymentMode"
+                      value="UPI"
+                      checked={paymentMode === 'UPI'}
+                      onChange={() => setPaymentMode('UPI')}
+                      style={{ accentColor: 'var(--wc-300)', width: '16px', height: '16px' }}
+                    />
+                    UPI
+                  </label>
+                </div>
+              </div>
+              {paymentMode === 'BANK_TRANSFER' ? (
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '14px' }}>
+                  <div className="form-group" style={{ marginBottom: 0 }}>
+                    <label className="form-label" htmlFor="payout-bank-name">Bank Name</label>
+                    <input
+                      id="payout-bank-name"
+                      className="form-input"
+                      style={{ paddingLeft: '14px' }}
+                      type="text"
+                      placeholder="e.g. HDFC Bank"
+                      value={bankName}
+                      onChange={(e) => setBankName(e.target.value)}
+                    />
+                  </div>
+                  <div className="form-group" style={{ marginBottom: 0 }}>
+                    <label className="form-label" htmlFor="payout-account-number">Account Number</label>
+                    <input
+                      id="payout-account-number"
+                      className="form-input"
+                      style={{ paddingLeft: '14px' }}
+                      type="text"
+                      placeholder="e.g. 123456789012"
+                      value={accountNumber}
+                      onChange={(e) => setAccountNumber(e.target.value)}
+                    />
+                  </div>
+                  <div className="form-group" style={{ marginBottom: 0 }}>
+                    <label className="form-label" htmlFor="payout-ifsc">IFSC Code</label>
+                    <input
+                      id="payout-ifsc"
+                      className="form-input"
+                      style={{ paddingLeft: '14px' }}
+                      type="text"
+                      placeholder="e.g. HDFC0001234"
+                      value={ifscCode}
+                      onChange={(e) => setIfscCode(e.target.value.toUpperCase())}
+                    />
+                  </div>
+                </div>
+              ) : (
+                <div className="form-group">
+                  <label className="form-label" htmlFor="payout-upi">UPI ID</label>
+                  <input
+                    id="payout-upi"
+                    className="form-input"
+                    style={{ paddingLeft: '14px', maxWidth: '340px' }}
+                    type="text"
+                    placeholder="e.g. name@upi or 9876543210@paytm"
+                    value={upiId}
+                    onChange={(e) => setUpiId(e.target.value)}
+                  />
+                </div>
+              )}
+            </div>
+
             <div className="form-actions">
               <button
                 type="button"
@@ -529,6 +744,24 @@ function SubmitReimbursement() {
           </form>
         </div>
       </main>
+
+      <SignaturePadModal
+        isOpen={showSignatureModal}
+        onClose={() => setShowSignatureModal(false)}
+        onConfirm={handleSignedSubmit}
+        title="Convenor Digital Sign-Off"
+        actionLabel="Digitally Sign & Submit Claim"
+        actionColor="#2a9d6e"
+        requireRemark={false}
+        remarkLabel="Submission Notes / Context (optional)"
+        remarkPlaceholder="Add any context or justification for this claim…"
+        claimInfo={{
+          committee,
+          event,
+          amount: totalReimbursementAmount,
+        }}
+        processing={submitting}
+      />
     </div>
   );
 }

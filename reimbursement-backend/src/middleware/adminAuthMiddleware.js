@@ -14,7 +14,8 @@ async function adminAuthMiddleware(req, res, next) {
     const decoded = jwt.verify(token, process.env.JWT_SECRET);
 
     // Verify token type/role
-    if (decoded.role !== "ADMINISTRATOR" && decoded.role !== "SUPER_ADMIN") {
+    const validRoles = ["SUPER_ADMIN", "FACULTY_MENTOR", "DEAN_STUDENTS", "ACCOUNTANT", "ADMINISTRATOR"];
+    if (!validRoles.includes(decoded.role)) {
       return res.status(403).json({
         message: "Access forbidden: Administrators only",
       });

@@ -2,6 +2,7 @@ const prisma = require("../prisma/client");
 const cloudinary = require("../config/cloudinary");
 
 const { logActivity } = require("../services/activityLogService");
+const { generateSignatureHash, buildAuditTrailCertificate } = require("../services/digitalSignatureService");
 
 const crypto = require("crypto");
 
@@ -34,7 +35,18 @@ const uploadToCloudinary = (fileBuffer, mimetype) => {
 
 async function createReimbursement(req, res) {
   try {
-    const { committee, event, description } = req.body;
+    const {
+      committee,
+      event,
+      description,
+      recipientType,
+      beneficiaryName,
+      paymentMode,
+      bankName,
+      accountNumber,
+      ifscCode,
+      upiId,
+    } = req.body;
 
     if (!committee || !event) {
       return res.status(400).json({
@@ -131,37 +143,142 @@ async function createReimbursement(req, res) {
 
     // Use Prisma transaction to create reimbursement, bills, connections, and approval trail
     const reimbursement = await prisma.$transaction(async (tx) => {
-      const lowestPosition = await tx.position.findFirst({
-        orderBy: { priority: "asc" },
+      // 1. Look up designated Faculty Mentor for this Club / Committee
+      const clubMapping = await tx.clubMentorMapping.findUnique({
+        where: { clubName: committee.trim() },
+        include: { facultyMentor: true },
       });
 
-      if (!lowestPosition) {
-        throw new Error("No approval positions configured. Cannot submit reimbursement.");
+      if (!clubMapping) {
+        throw new Error(
+          `No designated faculty mentor mapped for "${committee.trim()}". Please contact the Treasurer to assign a Faculty Mentor before submitting claims.`
+        );
       }
 
-      // Create reimbursement
+      // 2. Check Club Sanctioned Budget Limit
+      const clubBudget = await tx.clubBudget.findFirst({
+        where: { clubName: committee.trim() },
+        orderBy: { createdAt: "desc" },
+      });
+      const remainingClubBudget = clubBudget
+        ? Math.max(0, clubBudget.allocatedAmount - clubBudget.spentAmount)
+        : null;
+      const exceedsClubBudget = Boolean(clubBudget && totalClaimedAmount > remainingClubBudget);
+
+      // 3. Check Active Cycle & Approved Projection to determine Claim Type (ADVANCE vs POST_EVENT)
+      const activeCycle = await tx.projectionWindow.findFirst({
+        where: { isActive: true },
+      });
+
+      let clubProjection = null;
+      if (activeCycle) {
+        clubProjection = await tx.monthlyProjection.findFirst({
+          where: {
+            clubName: committee.trim(),
+            OR: [{ cycleId: activeCycle.id }, { targetMonth: activeCycle.targetMonth }],
+            status: "APPROVED",
+          },
+        });
+      }
+
+      const remainingProjectionQuota = clubProjection
+        ? Math.max(0, clubProjection.totalEstimatedAmount - (clubProjection.spentAmount || 0))
+        : 0;
+
+      // Advance/Within-Buffer qualification: must be within approved projection AND within club budget
+      const isWithinProjection = Boolean(
+        clubProjection &&
+        totalClaimedAmount <= remainingProjectionQuota &&
+        !exceedsClubBudget
+      );
+      const claimType = isWithinProjection ? "ADVANCE" : "POST_EVENT";
+      const routedToAccountant = !isWithinProjection;
+
+      // Determine reason for routing to Accountant flow
+      let accountantReason = null;
+      if (!isWithinProjection) {
+        if (exceedsClubBudget && clubProjection && totalClaimedAmount > remainingProjectionQuota) {
+          accountantReason = `Claim amount ₹${totalClaimedAmount.toLocaleString()} exceeds both club remaining budget (₹${remainingClubBudget.toLocaleString()} available) and cycle projection quota (₹${remainingProjectionQuota.toLocaleString()} remaining). Routed to Accountant.`;
+        } else if (exceedsClubBudget) {
+          accountantReason = `Claim amount ₹${totalClaimedAmount.toLocaleString()} exceeds club remaining sanctioned budget (₹${remainingClubBudget.toLocaleString()} available). Routed to Central Accountant for post-event audit.`;
+        } else {
+          accountantReason = `Claim amount ₹${totalClaimedAmount.toLocaleString()} exceeds approved cycle projection quota (₹${remainingProjectionQuota.toLocaleString()} remaining). Routed to Central Accountant review.`;
+        }
+      }
+
+      // Check current available buffer status
+      const now = new Date();
+      const currentMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
+      const buffer = await tx.treasurerBuffer.findFirst({
+        where: { currentMonth },
+        orderBy: { updatedAt: "desc" },
+      });
+
+      const availableBuffer = activeCycle
+        ? Math.max(0, activeCycle.bufferAmount - activeCycle.usedBufferAmount)
+        : (buffer ? buffer.currentBalance : 50000.0);
+      const withinBuffer = Boolean(isWithinProjection && totalClaimedAmount <= availableBuffer);
+
+      // 4. Create reimbursement with Stage 1: TREASURER
       const r = await tx.reimbursement.create({
         data: {
-          committee,
-          event,
+          committee: committee.trim(),
+          event: event.trim(),
           amount: totalClaimedAmount,
-          description,
+          description: description ? description.trim() : null,
           status: "PENDING",
-          currentPriority: lowestPosition.priority,
-          userId: req.user.id,
+          currentStage: "TREASURER",
+          currentPriority: 1,
+          assignedFacultyId: clubMapping.facultyMentorId,
+          claimType,
+          projectionId: clubProjection ? clubProjection.id : null,
+          withinBuffer,
+          routedToAccountant,
+          accountantReason,
+          recipientType: recipientType || "STUDENT",
+          beneficiaryName: beneficiaryName || req.user.name,
+          paymentMode: paymentMode || "BANK_TRANSFER",
+          bankName: bankName || null,
+          accountNumber: accountNumber || null,
+          ifscCode: ifscCode || null,
+          upiId: upiId || null,
+          submissionSignatureUrl: req.body.signatureImageUrl || null,
+          submissionSignatureHash: null,
+          submissionSignedAt: req.body.signatureImageUrl ? new Date() : null,
+          user: { connect: { id: req.user.id } },
         },
       });
 
-      // Create and connect each bill
+      // If convenor submitted a visual signature, generate tamper-proof cryptographic hash
+      if (req.body.signatureImageUrl) {
+        const sigTime = new Date();
+        const sigHash = generateSignatureHash({
+          reimbursementId: r.id,
+          amount: totalClaimedAmount,
+          signerId: req.user.id,
+          signerEmail: req.user.email,
+          signerRole: req.user.designation || "CONVENOR",
+          timestamp: sigTime,
+        });
+        await tx.reimbursement.update({
+          where: { id: r.id },
+          data: {
+            submissionSignatureHash: sigHash,
+            submissionSignedAt: sigTime,
+          },
+        });
+        r.submissionSignatureHash = sigHash;
+        r.submissionSignedAt = sigTime;
+      }
+
+      // 5. Create and connect each bill
       for (const billData of billsWithUrls) {
-        // Build unique identifier to prevent duplicate Bill records
         const uniqueIdentifier = billData.transactionId && billData.transactionId.trim() !== ""
           ? `txn:${billData.transactionId.trim()}`
           : (billData.vendorName && billData.vendorName.trim() !== "") || (billData.invoiceNumber && billData.invoiceNumber.trim() !== "")
             ? `inv:${(billData.vendorName || "").trim().toLowerCase()}|${(billData.invoiceNumber || "").trim().toLowerCase()}|${billData.billDate ? new Date(billData.billDate).toISOString().slice(0, 10) : ""}|${billData.amount}`
             : `uniq:${crypto.randomUUID()}`;
 
-        // Find existing or create new bill
         let bill = await tx.bill.findUnique({ where: { uniqueIdentifier } });
 
         if (!bill) {
@@ -178,7 +295,6 @@ async function createReimbursement(req, res) {
           });
         }
 
-        // Attach the bill to the reimbursement
         await tx.reimbursementBill.create({
           data: {
             reimbursementId: r.id,
@@ -188,32 +304,30 @@ async function createReimbursement(req, res) {
         });
       }
 
-      // Find administrators at the lowest priority
-      const admins = await tx.administrator.findMany({
-        where: { position: { priority: lowestPosition.priority } },
+      // 6. Create approval stub for Treasurer (Stage 1)
+      const treasurer = await tx.administrator.findFirst({
+        where: { role: "SUPER_ADMIN" },
       });
-
-      // Create approval stubs
-      if (admins.length > 0) {
-        await tx.reimbursementApproval.createMany({
-          data: admins.map((admin) => ({
+      if (treasurer) {
+        await tx.reimbursementApproval.create({
+          data: {
             reimbursementId: r.id,
-            administratorId: admin.id,
-            priority: lowestPosition.priority,
+            administratorId: treasurer.id,
+            priority: 1,
             status: "PENDING",
-          })),
+          },
         });
       }
 
-      // Write activity log
+      // 7. Write activity log
       await logActivity(
         {
           reimbursementId: r.id,
           action: "SUBMITTED",
-          activity: `Reimbursement submitted for ₹${totalClaimedAmount.toFixed(2)} with ${billsWithUrls.length} bill(s)`,
+          activity: `Claim submitted for ₹${totalClaimedAmount.toFixed(2)} (${claimType === "ADVANCE" ? "Advance/Within-Projection" : "Post-Event Manual"}). Routed to Treasurer for Stage 1 review.`,
           actorType: "USER",
           userId: req.user.id,
-          actorRole: "USER",
+          actorRole: req.user.designation || "CONVENOR",
         },
         tx
       );
@@ -230,7 +344,7 @@ async function createReimbursement(req, res) {
     });
   } catch (error) {
     console.error("Create reimbursement error:", error);
-    res.status(500).json({ message: "Internal Server Error" });
+    res.status(400).json({ message: error.message || "Internal Server Error" });
   }
 }
 
@@ -544,6 +658,98 @@ async function resubmitReimbursement(req, res) {
     });
   } catch (error) {
     console.error("Resubmit reimbursement error:", error);
+    res.status(400).json({ message: error.message || "Internal Server Error" });
+  }
+}
+
+/**
+ * GET /api/user/my-budget?month=YYYY-MM
+ * Returns the club budget for the authenticated C/DC user's club, for the given month.
+ * Also computes how much has been spent (approved + paid claims from this club in the month).
+ */
+async function getMyClubBudget(req, res) {
+  try {
+    const user = req.user;
+    if (!user.clubName) {
+      return res.status(200).json({ hasBudget: false });
+    }
+
+    const now = new Date();
+    const defaultMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
+    const targetMonth = req.query.month || defaultMonth;
+
+    let budget = await prisma.clubBudget.findUnique({
+      where: { clubName_targetMonth: { clubName: user.clubName.trim(), targetMonth } },
+    });
+
+    // Fallback: if no budget specifically for targetMonth, check if any budget exists for this club
+    if (!budget && !req.query.month) {
+      budget = await prisma.clubBudget.findFirst({
+        where: { clubName: user.clubName.trim() },
+        orderBy: { updatedAt: "desc" },
+      });
+    }
+
+    if (!budget) {
+      return res.status(200).json({ hasBudget: false, clubName: user.clubName, targetMonth });
+    }
+
+    res.status(200).json({
+      hasBudget: true,
+      id: budget.id,
+      clubName: budget.clubName,
+      targetMonth: budget.targetMonth,
+      allocatedAmount: budget.allocatedAmount,
+      spentAmount: budget.spentAmount,
+      remainingAmount: Math.max(0, budget.allocatedAmount - budget.spentAmount),
+      notes: budget.notes,
+    });
+  } catch (error) {
+    console.error("Get my club budget error:", error);
+    res.status(500).json({ message: "Internal Server Error" });
+  }
+}
+
+async function getSignatureAuditCertificate(req, res) {
+  try {
+    const { id } = req.params;
+    const raw = await buildAuditTrailCertificate(id);
+    if (!raw) {
+      return res.status(404).json({ message: "Reimbursement claim not found" });
+    }
+    // Normalise into a shape the front-end and tests expect
+    const certificate = {
+      certificateNumber: raw.certificateId,
+      claim: {
+        id: raw.claimId,
+        committee: raw.committee,
+        event: raw.event,
+        amount: raw.amount,
+        claimType: raw.claimType,
+        status: raw.status,
+        currentStage: raw.currentStage,
+        isPaid: raw.isPaid,
+        paymentReference: raw.paymentReference,
+        paidAt: raw.paidAt,
+      },
+      generatedAt: raw.generatedAt,
+      verificationStatus: raw.isTamperProof ? "100% VERIFIED AUTHENTIC" : "INTEGRITY WARNING",
+      isTamperProof: raw.isTamperProof,
+      signatures: (raw.signatures || []).map((s) => ({
+        stage: s.stage,
+        signerRole: s.role,
+        signerName: s.signerName,
+        signerEmail: s.signerEmail,
+        signatureHash: s.signatureHash,
+        signatureImageUrl: s.signatureImageUrl,
+        signedAt: s.signedAt,
+        isValid: s.isValid,
+        remarks: s.remarks,
+      })),
+    };
+    res.status(200).json({ certificate });
+  } catch (error) {
+    console.error("Get signature audit certificate error:", error);
     res.status(500).json({ message: "Internal Server Error" });
   }
 }
@@ -555,4 +761,7 @@ module.exports = {
   cancelReimbursement,
   getActivityLog,
   resubmitReimbursement,
+  getMyClubBudget,
+  getSignatureAuditCertificate,
 };
+

@@ -45,6 +45,8 @@ async function login(req, res) {
         name: user.name,
         email: user.email,
         role: "USER",
+        designation: user.designation,
+        clubName: user.clubName,
       },
     });
   } catch (error) {

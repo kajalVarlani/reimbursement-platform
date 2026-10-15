@@ -62,3 +62,33 @@ export const detachBill = async (reimbursementId, billId) => {
   return response.data;
 };
 
+// ── Monthly Projections (C / DC) ───────────────────────────────────────────────
+
+export const getActiveProjectionWindow = async () => {
+  const response = await api.get('/projections/active-window');
+  return response.data;
+};
+
+export const submitMonthlyProjection = async ({ targetMonth, items }) => {
+  const response = await api.post('/projections/submit', { targetMonth, items });
+  return response.data;
+};
+
+// ── Club Budget (C / DC) ────────────────────────────────────────────────────────
+
+/**
+ * Fetch the authenticated user's club budget for the given month.
+ * Returns { hasBudget, allocatedAmount, spentAmount, remainingAmount, ... }
+ */
+export const getMyClubBudget = async (month = '') => {
+  const params = month ? { month } : {};
+  const response = await api.get('/user/reimbursements/budget', { params });
+  return response.data;
+};
+
+// ── Digital Signature Audit Certificate ────────────────────────────────────────
+export const getSignatureAuditCertificate = async (id) => {
+  const response = await api.get(`/user/reimbursements/${id}/signature-audit`);
+  return response.data;
+};
+

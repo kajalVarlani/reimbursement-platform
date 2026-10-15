@@ -26,7 +26,8 @@ router.post("/:id/query", raiseQuery);
 // ── Payment ─────────────────────────────────────────────────────────────────
 router.post("/:id/mark-paid", markAsPaid);
 
-// ── Activity log ────────────────────────────────────────────────────────────
+// ── Activity log & Digital Signature Audit ───────────────────────────────
 router.get("/:id/activity", getActivityLog);
+router.get("/:id/signature-audit", require("../controllers/reimbursementController").getSignatureAuditCertificate);
 
 module.exports = router;

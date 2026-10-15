@@ -8,6 +8,8 @@ const {
   cancelReimbursement,
   getActivityLog,
   resubmitReimbursement,
+  getMyClubBudget,
+  getSignatureAuditCertificate,
 } = require("../controllers/reimbursementController");
 const { attachBill, detachBill, getBills } = require("../controllers/billController");
 
@@ -15,12 +17,16 @@ const router = express.Router();
 
 router.use(userAuthMiddleware);
 
+// ── Club Budget (C/DC) ─────────────────────────────────────────────────────
+router.get("/budget", getMyClubBudget);
+
 // ── Reimbursement CRUD ──────────────────────────────────────────────────────
 router.post("/", upload.array("receipts"), createReimbursement);
 router.get("/", getMyReimbursements);
 router.get("/:id", getReimbursementDetails);
 router.post("/:id/cancel", cancelReimbursement);
 router.post("/:id/resubmit", resubmitReimbursement);
+router.get("/:id/signature-audit", getSignatureAuditCertificate);
 
 // ── Activity log ────────────────────────────────────────────────────────────
 router.get("/:id/activity", getActivityLog);

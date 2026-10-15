@@ -9,6 +9,11 @@ import {
   raiseQueryOnReimbursement,
   markAsPaid,
   getApprovalActivityLog,
+  getBufferStatus,
+  exportTreasurerMonthlyIndent,
+  getIndentSummary,
+  topUpBuffer,
+  getSignatureAuditCertificate,
 } from '../services/adminService';
 import {
   HiOutlineClock,
@@ -23,8 +28,12 @@ import {
   HiOutlineClipboardList,
   HiOutlineCurrencyRupee,
   HiOutlineFilter,
+  HiOutlineDocumentDownload,
+  HiOutlinePlus,
 } from 'react-icons/hi';
-import { TbFileInvoice, TbShieldCheck } from 'react-icons/tb';
+import { TbFileInvoice, TbShieldCheck, TbCertificate } from 'react-icons/tb';
+import SignaturePadModal from '../components/SignaturePadModal';
+import SanctionCertificateModal from '../components/SanctionCertificateModal';
 import toast, { Toaster } from 'react-hot-toast';
 import './Dashboard.css';
 
@@ -51,10 +60,86 @@ function ApprovalQueue() {
   const { user, role } = useSelector((state) => state.auth);
   const isSuperAdmin = role === 'SUPER_ADMIN';
 
+  const canActOnClaim = (claim) => {
+    if (!claim || (claim.status !== 'PENDING' && claim.status !== 'QUERY_RAISED')) return false;
+    if (role === 'FACULTY_MENTOR') {
+      return claim.currentStage === 'FACULTY_MENTOR';
+    }
+    if (role === 'SUPER_ADMIN') {
+      return claim.currentStage === 'TREASURER' || claim.currentStage === 'ACCOUNTANT_REVIEW';
+    }
+    if (role === 'ACCOUNTANT') {
+      return (claim.currentStage === 'TREASURER' || claim.currentStage === 'ACCOUNTANT_REVIEW') && claim.routedToAccountant;
+    }
+    if (role === 'DEAN_STUDENTS') {
+      return claim.currentStage === 'DEAN_STUDENTS';
+    }
+    return false;
+  };
+
+  const canMarkPaid = (claim) => {
+    if (!claim || claim.status !== 'APPROVED' || claim.isPaid) return false;
+    if (role === 'SUPER_ADMIN') {
+      // In post-event accountant flow, treasurer can confirm once accountant marks paid
+      if (claim.routedToAccountant || !claim.withinBuffer) {
+        return Boolean(claim.accountantPaid);
+      }
+      return true;
+    }
+    if (role === 'ACCOUNTANT') {
+      return (claim.routedToAccountant || !claim.withinBuffer) && !claim.accountantPaid;
+    }
+    return false;
+  };
+
   const [claims, setClaims] = useState([]);
   const [loading, setLoading] = useState(true);
   const [selectedClaim, setSelectedClaim] = useState(null);
   const [statusFilter, setStatusFilter] = useState('');
+
+  // Treasurer advance buffer state
+  const [bufferStatus, setBufferStatus] = useState(null);
+  const [exportingIndent, setExportingIndent] = useState(false);
+
+  // Indent Generator Modal state
+  const [showIndentModal, setShowIndentModal] = useState(false);
+  const [indentMonth, setIndentMonth] = useState(() => {
+    const now = new Date();
+    return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+  });
+  const [indentSummary, setIndentSummary] = useState(null);
+  const [loadingIndent, setLoadingIndent] = useState(false);
+
+  // Quick Top-up Modal state
+  const [showTopUpModal, setShowTopUpModal] = useState(false);
+  const [topUpAmount, setTopUpAmount] = useState('');
+  const [topUpNotes, setTopUpNotes] = useState('');
+  const [toppingUp, setToppingUp] = useState(false);
+
+  // Digital signature approval modal state
+  const [signatureModal, setSignatureModal] = useState({
+    open: false,
+    claim: null,
+    processing: false,
+  });
+
+  // Sanction certificate viewer modal state
+  const [certModal, setCertModal] = useState({
+    open: false,
+    certificate: null,
+    loading: false,
+  });
+
+  const handleOpenCertificate = async (claimId) => {
+    setCertModal({ open: true, certificate: null, loading: true });
+    try {
+      const data = await getSignatureAuditCertificate(claimId);
+      setCertModal({ open: true, certificate: data, loading: false });
+    } catch (err) {
+      toast.error('Failed to load sanction certificate');
+      setCertModal({ open: false, certificate: null, loading: false });
+    }
+  };
 
   // Search & Filter state
   const [searchTerm, setSearchTerm] = useState('');
@@ -204,9 +289,68 @@ function ApprovalQueue() {
     }
   }, [statusFilter]);
 
+  const fetchBuffer = useCallback(async () => {
+    if (!isSuperAdmin) return;
+    try {
+      const data = await getBufferStatus();
+      setBufferStatus(data);
+    } catch (e) {
+      console.error('Failed to load buffer status', e);
+    }
+  }, [isSuperAdmin]);
+
   useEffect(() => {
     fetchQueue();
-  }, [fetchQueue]);
+    fetchBuffer();
+  }, [fetchQueue, fetchBuffer]);
+
+  const loadIndentSummary = useCallback(async (month) => {
+    setLoadingIndent(true);
+    try {
+      const summary = await getIndentSummary(month);
+      setIndentSummary(summary);
+    } catch (e) {
+      console.error('Failed to load indent summary', e);
+    } finally {
+      setLoadingIndent(false);
+    }
+  }, []);
+
+  const handleDownloadIndent = async () => {
+    setExportingIndent(true);
+    const toastId = toast.loading(`Generating official indent for ${indentMonth}…`);
+    try {
+      await exportTreasurerMonthlyIndent(indentMonth);
+      toast.success('Official Indent (.xlsx) downloaded successfully!', { id: toastId });
+      await fetchBuffer();
+    } catch (err) {
+      toast.error(err.response?.data?.message || 'Failed to export indent', { id: toastId });
+    } finally {
+      setExportingIndent(false);
+    }
+  };
+
+  const handleQuickTopUp = async (e) => {
+    e.preventDefault();
+    if (!topUpAmount || parseFloat(topUpAmount) <= 0) {
+      toast.error('Please enter a valid top-up amount');
+      return;
+    }
+    setToppingUp(true);
+    const toastId = toast.loading('Adding buffer top-up…');
+    try {
+      await topUpBuffer({ amount: parseFloat(topUpAmount), notes: topUpNotes });
+      toast.success(`Buffer topped up by ₹${parseFloat(topUpAmount).toLocaleString('en-IN')}!`, { id: toastId });
+      setShowTopUpModal(false);
+      setTopUpAmount('');
+      setTopUpNotes('');
+      await fetchBuffer();
+    } catch (err) {
+      toast.error(err.response?.data?.message || 'Failed to top up buffer', { id: toastId });
+    } finally {
+      setToppingUp(false);
+    }
+  };
 
   const handleStatusFilterChange = (value) => {
     setStatusFilter(value);
@@ -220,22 +364,70 @@ function ApprovalQueue() {
   };
 
   const openConfirm = (action, claimId) => {
-    setConfirmModal({ open: true, action, claimId, remark: '', processing: false });
+    const claim = claims.find((c) => c.id === claimId);
+    if (action === 'approve') {
+      setSignatureModal({
+        open: true,
+        claim,
+        processing: false,
+      });
+      return;
+    }
+    setConfirmModal({
+      open: true,
+      action,
+      claimId,
+      claim,
+      remark: '',
+      paymentReference: '',
+      notes: '',
+      processing: false,
+    });
+  };
+
+  const handleSignedApprove = async (signatureDataUrl, remark) => {
+    const claim = signatureModal.claim;
+    if (!claim) return;
+    setSignatureModal((prev) => ({ ...prev, processing: true }));
+    const toastId = toast.loading('Signing & approving claim with cryptographic seal…');
+    try {
+      await approveReimbursement(claim.id, {
+        remark,
+        signatureImageUrl: signatureDataUrl,
+      });
+      toast.success('Claim approved & digitally signed with HMAC-SHA256 seal!', { id: toastId });
+      setSignatureModal({ open: false, claim: null, processing: false });
+      setSelectedClaim(null);
+      await fetchQueue();
+      if (isSuperAdmin) await fetchBuffer();
+    } catch (err) {
+      toast.error(err.response?.data?.message || 'Approval failed. Please try again.', { id: toastId });
+      setSignatureModal((prev) => ({ ...prev, processing: false }));
+    }
   };
 
   const closeConfirm = () => {
     if (confirmModal.processing) return;
-    setConfirmModal({ open: false, action: null, claimId: null, remark: '', processing: false });
+    setConfirmModal({
+      open: false,
+      action: null,
+      claimId: null,
+      claim: null,
+      remark: '',
+      paymentReference: '',
+      notes: '',
+      processing: false,
+    });
   };
 
   const handleConfirmAction = async () => {
-    const { action, claimId, remark } = confirmModal;
+    const { action, claimId, remark, paymentReference, notes } = confirmModal;
     setConfirmModal((prev) => ({ ...prev, processing: true }));
     const loadingMessages = {
       approve: 'Approving claim…',
       reject: 'Rejecting claim…',
       query: 'Raising query…',
-      'mark-paid': 'Marking as paid…',
+      'mark-paid': 'Disbursing & marking as paid…',
     };
     const toastId = toast.loading(loadingMessages[action] || 'Processing…');
     try {
@@ -249,12 +441,22 @@ function ApprovalQueue() {
         await raiseQueryOnReimbursement(claimId, remark);
         toast.success('Query raised successfully!', { id: toastId });
       } else if (action === 'mark-paid') {
-        await markAsPaid(claimId);
-        toast.success('Reimbursement marked as paid!', { id: toastId });
+        await markAsPaid(claimId, { paymentReference, notes });
+        toast.success('Reimbursement payment marked as disbursed!', { id: toastId });
       }
-      setConfirmModal({ open: false, action: null, claimId: null, remark: '', processing: false });
+      setConfirmModal({
+        open: false,
+        action: null,
+        claimId: null,
+        claim: null,
+        remark: '',
+        paymentReference: '',
+        notes: '',
+        processing: false,
+      });
       setSelectedClaim(null);
       await fetchQueue();
+      if (isSuperAdmin) await fetchBuffer();
     } catch (err) {
       toast.error(err.response?.data?.message || 'Action failed. Please try again.', {
         id: toastId,
@@ -276,9 +478,16 @@ function ApprovalQueue() {
   };
 
   // Count helpers for metrics
-  const pendingCount = claims.filter(c => c.status === 'PENDING' || c.status === 'QUERY_RAISED').length;
+  // A claim is active/pending in the queue if it has not yet been disbursed (isPaid: false) and is not cancelled/rejected
+  const isPendingClaim = (c) => !c.isPaid && c.status !== 'REJECTED' && c.status !== 'CANCELLED';
+  const pendingCount = claims.filter(isPendingClaim).length;
+  // Partially approved: in-flight claim that has received at least one stage approval
+  const partiallyApprovedCount = claims.filter(c => isPendingClaim(c) && c.approvals?.some(a => a.status === 'APPROVED')).length;
   const approvedCount = claims.filter(c => c.status === 'APPROVED').length;
+  const paidCount = claims.filter(c => c.isPaid).length;
+  const pendingAmount = claims.filter(isPendingClaim).reduce((sum, c) => sum + (c.amount || 0), 0);
   const totalAmount = claims.reduce((sum, c) => sum + (c.amount || 0), 0);
+  const totalPaidAmount = claims.filter(c => c.isPaid).reduce((sum, c) => sum + (c.amount || 0), 0);
 
   return (
     <div className="dashboard-container">
@@ -316,7 +525,10 @@ function ApprovalQueue() {
             <div style={{ display: 'flex', flexDirection: 'column', lineHeight: 1.3 }}>
               <span style={{ fontSize: '13.5px', fontWeight: 700 }}>{user?.name || 'Admin'}</span>
               <span style={{ fontSize: '11px', color: 'var(--wc-300)', fontWeight: 500 }}>
-                {isSuperAdmin ? 'Super Admin' : 'Administrator'}
+                {role === 'SUPER_ADMIN' ? 'Treasurer (Super Admin)' :
+                 role === 'FACULTY_MENTOR' ? 'Faculty Mentor' :
+                 role === 'DEAN_STUDENTS' ? 'Dean Students' :
+                 role === 'ACCOUNTANT' ? 'Central Accountant' : 'Administrator'}
               </span>
             </div>
           </div>
@@ -369,6 +581,133 @@ function ApprovalQueue() {
           </div>
         </div>
 
+        {/* ── Treasurer Advance Buffer & Indent Card (Super Admin) ── */}
+        {isSuperAdmin && bufferStatus && (
+          <div
+            id="treasurer-buffer-banner"
+            style={{
+              background: 'linear-gradient(135deg, rgba(79, 124, 130, 0.08) 0%, rgba(240, 248, 250, 0.6) 100%)',
+              border: '1px solid var(--border-default)',
+              borderRadius: 'var(--radius-lg)',
+              padding: '20px 24px',
+              marginBottom: '22px',
+              boxShadow: '0 2px 8px rgba(0, 0, 0, 0.03)',
+            }}
+          >
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '14px' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                <div style={{ width: '44px', height: '44px', borderRadius: '12px', background: 'rgba(79, 124, 130, 0.15)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--wc-300)', fontSize: '24px' }}>
+                  <HiOutlineCurrencyRupee />
+                </div>
+                <div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+                    <h3 style={{ fontSize: '16px', fontWeight: 800, margin: 0, color: 'var(--text-primary)' }}>
+                      Treasurer Advance Buffer — {bufferStatus.currentMonth}
+                    </h3>
+                    <span style={{ fontSize: '11px', fontWeight: 700, padding: '2px 8px', borderRadius: '12px', background: 'var(--wc-100)', color: 'var(--wc-400)', textTransform: 'uppercase' }}>
+                      Super Admin
+                    </span>
+                    <span style={{
+                      fontSize: '11px',
+                      fontWeight: 700,
+                      padding: '2px 8px',
+                      borderRadius: '12px',
+                      background: bufferStatus.currentBalance <= 0 ? 'rgba(239, 68, 68, 0.12)' : 'rgba(16, 185, 129, 0.12)',
+                      color: bufferStatus.currentBalance <= 0 ? '#ef4444' : '#10b981',
+                    }}>
+                      {bufferStatus.currentBalance <= 0 ? 'Buffer Exhausted' : 'Active & Surplus Available'}
+                    </span>
+                  </div>
+                  <span style={{ fontSize: '12.5px', color: 'var(--text-muted)' }}>
+                    Immediate student & vendor payouts. Direct buffer debit upon payment mark-off.
+                  </span>
+                </div>
+              </div>
+
+              <div style={{ display: 'flex', gap: '10px', alignItems: 'center', flexWrap: 'wrap' }}>
+                <button
+                  className="btn-secondary"
+                  onClick={() => setShowTopUpModal(true)}
+                  style={{ padding: '8px 14px', fontSize: '13px', display: 'flex', alignItems: 'center', gap: '5px' }}
+                  id="btn-treasurer-topup-buffer"
+                >
+                  <HiOutlinePlus /> Top-Up
+                </button>
+                <button
+                  className="btn-secondary"
+                  onClick={() => navigate('/admin/manage')}
+                  style={{ padding: '8px 14px', fontSize: '13px' }}
+                  id="btn-treasurer-manage-buffer"
+                >
+                  Manage Buffer &amp; Budgets
+                </button>
+                <button
+                  className="btn-primary"
+                  onClick={() => {
+                    setShowIndentModal(true);
+                    loadIndentSummary(indentMonth);
+                  }}
+                  style={{ padding: '8px 18px', fontSize: '13px', display: 'flex', alignItems: 'center', gap: '6px' }}
+                  id="btn-treasurer-export-indent"
+                >
+                  <HiOutlineDocumentDownload style={{ fontSize: '16px' }} />
+                  Generate Indent (.xlsx)
+                </button>
+              </div>
+            </div>
+
+            {/* Quick 3 Stat Cards */}
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '12px', marginTop: '16px' }}>
+              <div style={{ background: 'white', border: '1px solid var(--border-light)', borderRadius: 'var(--radius-sm)', padding: '10px 14px' }}>
+                <div style={{ fontSize: '11px', fontWeight: 600, color: 'var(--text-muted)', textTransform: 'uppercase' }}>Monthly Advance</div>
+                <div style={{ fontSize: '18px', fontWeight: 800, color: 'var(--text-primary)', marginTop: '2px' }}>
+                  ₹{bufferStatus.monthlyAdvance?.toLocaleString('en-IN', { minimumFractionDigits: 2 })}
+                </div>
+                <div style={{ fontSize: '11px', color: 'var(--text-muted)', marginTop: '2px' }}>Allocated for {bufferStatus.currentMonth}</div>
+              </div>
+
+              <div style={{ background: 'white', border: '1px solid var(--border-light)', borderRadius: 'var(--radius-sm)', padding: '10px 14px' }}>
+                <div style={{ fontSize: '11px', fontWeight: 600, color: 'var(--text-muted)', textTransform: 'uppercase' }}>Available Balance</div>
+                <div style={{ fontSize: '18px', fontWeight: 800, color: bufferStatus.currentBalance < 10000 ? '#ef4444' : '#10b981', marginTop: '2px' }}>
+                  ₹{bufferStatus.currentBalance?.toLocaleString('en-IN', { minimumFractionDigits: 2 })}
+                </div>
+                <div style={{ fontSize: '11px', color: 'var(--text-muted)', marginTop: '2px' }}>Remaining for payouts</div>
+              </div>
+
+              <div style={{ background: 'white', border: '1px solid var(--border-light)', borderRadius: 'var(--radius-sm)', padding: '10px 14px' }}>
+                <div style={{ fontSize: '11px', fontWeight: 600, color: 'var(--text-muted)', textTransform: 'uppercase' }}>Disbursed from Buffer</div>
+                <div style={{ fontSize: '18px', fontWeight: 800, color: 'var(--wc-200)', marginTop: '2px' }}>
+                  ₹{Math.max(0, bufferStatus.monthlyAdvance - bufferStatus.currentBalance).toLocaleString('en-IN', { minimumFractionDigits: 2 })}
+                </div>
+                <div style={{ fontSize: '11px', color: 'var(--text-muted)', marginTop: '2px' }}>Total debited claims</div>
+              </div>
+            </div>
+
+            {/* Buffer Progress Bar */}
+            <div style={{ marginTop: '14px' }}>
+              {(() => {
+                const spent = Math.max(0, bufferStatus.monthlyAdvance - bufferStatus.currentBalance);
+                const percent = bufferStatus.monthlyAdvance > 0
+                  ? Math.min(100, Math.round((spent / bufferStatus.monthlyAdvance) * 100))
+                  : 0;
+                const color = percent >= 90 ? '#ef4444' : percent >= 70 ? '#f59e0b' : '#10b981';
+
+                return (
+                  <div>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '11.5px', color: 'var(--text-secondary)', marginBottom: '4px' }}>
+                      <span>Buffer Disbursed: ₹{spent.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</span>
+                      <span style={{ fontWeight: 700, color }}>{percent}% Utilized</span>
+                    </div>
+                    <div style={{ height: '7px', background: 'var(--border-lighter, #e5e7eb)', borderRadius: '4px', overflow: 'hidden' }}>
+                      <div style={{ width: `${percent}%`, height: '100%', background: color, transition: 'width 0.3s ease' }} />
+                    </div>
+                  </div>
+                );
+              })()}
+            </div>
+          </div>
+        )}
+
         {/* Metrics */}
         <section className="metrics-grid">
           <div className="metric-card">
@@ -387,7 +726,7 @@ function ApprovalQueue() {
               </div>
               <div className="metric-info">
                 <span className="metric-value">
-                  {claims.filter((c) => c.approvals?.some((a) => a.status === 'APPROVED')).length}
+                  {partiallyApprovedCount}
                 </span>
                 <span className="metric-label">Partially Approved</span>
               </div>
@@ -410,11 +749,24 @@ function ApprovalQueue() {
             </div>
             <div className="metric-info">
               <span className="metric-value">
-                ₹{totalAmount.toLocaleString('en-IN')}
+                ₹{(isSuperAdmin && !statusFilter ? totalAmount : pendingAmount).toLocaleString('en-IN')}
               </span>
-              <span className="metric-label">{isSuperAdmin ? 'Total Value' : 'Total Amount Pending'}</span>
+              <span className="metric-label">{isSuperAdmin && !statusFilter ? 'Total Value' : 'Total Amount Pending'}</span>
             </div>
           </div>
+          {isSuperAdmin && (
+            <div className="metric-card">
+              <div className="metric-icon-box approved">
+                <HiOutlineCurrencyRupee />
+              </div>
+              <div className="metric-info">
+                <span className="metric-value" style={{ fontSize: '18px' }}>
+                  ₹{totalPaidAmount.toLocaleString('en-IN')}
+                </span>
+                <span className="metric-label">Disbursed ({paidCount} claims)</span>
+              </div>
+            </div>
+          )}
         </section>
 
         {/* Claims Table */}
@@ -519,8 +871,17 @@ function ApprovalQueue() {
                               >
                                 <HiOutlineClipboardList />
                               </button>
-                              {/* Regular admin actions — only on PENDING/QUERY_RAISED */}
-                              {!isSuperAdmin && (claim.status === 'PENDING' || claim.status === 'QUERY_RAISED') && (
+                              <button
+                                className="btn-action-icon"
+                                onClick={() => handleOpenCertificate(claim.id)}
+                                title="Sanction Certificate & Cryptographic Trail"
+                                id={`btn-cert-${claim.id}`}
+                                style={{ color: '#2a9d6e' }}
+                              >
+                                <TbCertificate style={{ fontSize: '18px' }} />
+                              </button>
+                              {/* Admin actions if authorized at this stage */}
+                              {canActOnClaim(claim) && (
                                 <>
                                   <button
                                     className="btn-action-approve"
@@ -551,20 +912,61 @@ function ApprovalQueue() {
                                   </button>
                                 </>
                               )}
-                              {/* Super Admin — view only; no approve/reject/query */}
-                              {/* Super Admin — mark as paid on APPROVED claims */}
-                              {isSuperAdmin && claim.status === 'APPROVED' && !claim.isPaid && (
+                              {/* Stage indicator if claim is pending another stage */}
+                              {!canActOnClaim(claim) && (claim.status === 'PENDING' || claim.status === 'QUERY_RAISED') && (
+                                <span style={{
+                                  fontSize: '11px',
+                                  padding: '4px 8px',
+                                  borderRadius: '6px',
+                                  background: 'rgba(79, 124, 130, 0.08)',
+                                  color: 'var(--text-secondary)',
+                                  fontWeight: 600,
+                                }}>
+                                  ⏳ Awaiting {
+                                    claim.currentStage === 'FACULTY_MENTOR' ? 'Faculty Mentor' :
+                                    claim.currentStage === 'TREASURER' ? 'Treasurer' :
+                                    claim.currentStage === 'ACCOUNTANT_REVIEW' ? 'Accountant' :
+                                    claim.currentStage === 'DEAN_STUDENTS' ? 'Dean Students' : claim.currentStage
+                                  }
+                                </span>
+                              )}
+                              {/* Mark as paid on APPROVED claims */}
+                              {canMarkPaid(claim) && (
                                 <button
                                   className="btn-action-approve"
                                   onClick={() => openConfirm('mark-paid', claim.id)}
-                                  title="Mark as Paid"
+                                  title={role === 'ACCOUNTANT' ? 'Mark Paid (Accountant)' : 'Confirm & Mark Paid (Treasurer)'}
                                   id={`btn-mark-paid-${claim.id}`}
                                 >
                                   <HiOutlineCurrencyRupee />
-                                  Mark Paid
+                                  {role === 'ACCOUNTANT' ? 'Mark Paid' : (claim.accountantPaid ? 'Confirm & Mark Paid' : 'Mark Paid')}
                                 </button>
                               )}
-                              {isSuperAdmin && claim.isPaid && (
+                              {!claim.isPaid && claim.accountantPaid && role === 'ACCOUNTANT' && (
+                                <span style={{
+                                  fontSize: '11px',
+                                  padding: '4px 8px',
+                                  borderRadius: '6px',
+                                  background: 'rgba(59, 130, 246, 0.1)',
+                                  color: '#2563eb',
+                                  fontWeight: 600,
+                                }}>
+                                  ✓ Paid (Loopback to Treasurer)
+                                </span>
+                              )}
+                              {!claim.isPaid && claim.status === 'APPROVED' && (claim.routedToAccountant || !claim.withinBuffer) && !claim.accountantPaid && role === 'SUPER_ADMIN' && (
+                                <span style={{
+                                  fontSize: '11px',
+                                  padding: '4px 8px',
+                                  borderRadius: '6px',
+                                  background: 'rgba(245, 158, 11, 0.1)',
+                                  color: '#d97706',
+                                  fontWeight: 600,
+                                }}>
+                                  ⏳ Awaiting Accountant Payout
+                                </span>
+                              )}
+                              {claim.isPaid && (
                                 <span style={{ fontSize: '12px', color: 'var(--success)', fontWeight: 600, padding: '4px 8px' }}>
                                   ✅ Paid
                                 </span>
@@ -589,8 +991,8 @@ function ApprovalQueue() {
             <div className="modal-header">
               <h3 className="modal-title">Claim Details</h3>
               <div style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
-                {/* Regular admin actions in modal — only for non-super-admins */}
-                {!isSuperAdmin && (selectedClaim.status === 'PENDING' || selectedClaim.status === 'QUERY_RAISED') && (
+                {/* Actions in modal on PENDING/QUERY_RAISED claims if authorized */}
+                {canActOnClaim(selectedClaim) && (
                   <>
                     <button
                       className="btn-action-approve"
@@ -618,15 +1020,15 @@ function ApprovalQueue() {
                     </button>
                   </>
                 )}
-                {/* Super Admin — only Mark Paid action allowed */}
-                {isSuperAdmin && selectedClaim.status === 'APPROVED' && !selectedClaim.isPaid && (
+                {/* Mark Paid action allowed for authorized roles */}
+                {canMarkPaid(selectedClaim) && (
                   <button
                     className="btn-action-approve"
                     style={{ padding: '7px 14px' }}
                     onClick={() => { setSelectedClaim(null); openConfirm('mark-paid', selectedClaim.id); }}
                     id="modal-btn-mark-paid"
                   >
-                    <HiOutlineCurrencyRupee /> Mark Paid
+                    <HiOutlineCurrencyRupee /> {role === 'ACCOUNTANT' ? 'Mark Paid' : (selectedClaim.accountantPaid ? 'Confirm & Mark Paid' : 'Mark Paid')}
                   </button>
                 )}
                 <button
@@ -636,6 +1038,16 @@ function ApprovalQueue() {
                   id="modal-btn-activity"
                 >
                   <HiOutlineClipboardList />
+                </button>
+                <button
+                  className="btn-secondary"
+                  style={{ padding: '6px 12px', fontSize: '12px', display: 'flex', alignItems: 'center', gap: '5px' }}
+                  onClick={() => handleOpenCertificate(selectedClaim.id)}
+                  title="View Official Sanction Certificate"
+                  id="modal-btn-certificate"
+                >
+                  <TbCertificate style={{ fontSize: '16px', color: 'var(--success)' }} />
+                  Sanction Certificate
                 </button>
                 <button className="modal-close-btn" onClick={() => setSelectedClaim(null)}>
                   <HiOutlineX />
@@ -1075,9 +1487,97 @@ function ApprovalQueue() {
                   : confirmModal.action === 'reject'
                     ? 'Are you sure you want to reject this claim? This action will terminate the approval workflow.'
                     : confirmModal.action === 'mark-paid'
-                      ? 'Are you sure you want to mark this reimbursement as paid? The submitting user will be notified via email.'
+                      ? (role === 'ACCOUNTANT'
+                          ? 'Confirm that payment has been disbursed to the beneficiary. This will loop back to the Treasurer for ledger confirmation & budget debit.'
+                          : (confirmModal.claim?.accountantPaid
+                              ? 'Confirm receipt of Central Accountant disbursal. This will debit the club budget and finalize the claim to COMPLETED.'
+                              : 'Confirm that payment has been disbursed to the beneficiary. The submitting user will receive a confirmation email.'))
                       : 'Are you sure you want to raise a query on this claim? This will suspend the approval process and notify the user to provide clarification.'}
               </p>
+
+              {/* ── Mark Paid Routing Info & Details ── */}
+              {confirmModal.action === 'mark-paid' && (
+                <div style={{ marginTop: '14px', marginBottom: '16px' }}>
+                  {confirmModal.claim && (
+                    <div
+                      style={{
+                        background: role === 'ACCOUNTANT'
+                          ? 'rgba(59, 130, 246, 0.08)'
+                          : confirmModal.claim.accountantPaid
+                            ? 'rgba(16, 185, 129, 0.08)'
+                            : 'rgba(16, 185, 129, 0.08)',
+                        border: `1px solid ${
+                          role === 'ACCOUNTANT'
+                            ? 'rgba(59, 130, 246, 0.28)'
+                            : 'rgba(16, 185, 129, 0.28)'
+                        }`,
+                        borderRadius: 'var(--radius-md)',
+                        padding: '12px 16px',
+                        marginBottom: '16px',
+                      }}
+                    >
+                      <div style={{ fontWeight: 700, fontSize: '13.5px', color: 'var(--text-primary)', marginBottom: '4px' }}>
+                        {role === 'ACCOUNTANT'
+                          ? '🏦 Step 1: Central Accountant Bank Disbursal'
+                          : confirmModal.claim.accountantPaid
+                            ? '🏛️ Step 2 (Loopback): Treasurer Final Mark-Off & Budget Debit'
+                            : '🟢 Advance Buffer Payout'}
+                      </div>
+                      <div style={{ fontSize: '12.5px', color: 'var(--text-secondary)', lineHeight: 1.5 }}>
+                        {role === 'ACCOUNTANT' ? (
+                          <>
+                            Enter the bank transaction/UTR reference for disbursing <strong>₹{confirmModal.claim.amount?.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</strong>. After you confirm, this claim will automatically <strong>loop back to the Treasurer</strong> for final ledger confirmation &amp; budget debit.
+                          </>
+                        ) : confirmModal.claim.accountantPaid ? (
+                          <>
+                            Central Accountant has disbursed this claim under UTR: <strong>{confirmModal.claim.accountantPaymentRef || confirmModal.paymentReference || 'N/A'}</strong>. Confirming will debit <strong>₹{confirmModal.claim.amount?.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</strong> from the <strong>{confirmModal.claim.committee}</strong> club budget and finalize this claim as <strong>COMPLETED</strong>.
+                          </>
+                        ) : (
+                          <>
+                            Claim of <strong>₹{confirmModal.claim.amount?.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</strong> will be debited from both the <strong>Treasurer Advance Buffer</strong> and the <strong>{confirmModal.claim.committee}</strong> club budget.
+                          </>
+                        )}
+                      </div>
+                    </div>
+                  )}
+
+                  <div className="form-group" style={{ marginBottom: '12px' }}>
+                    <label className="form-label" htmlFor="payment-ref-input">
+                      Payment Reference / UTR Number (Optional)
+                    </label>
+                    <input
+                      id="payment-ref-input"
+                      className="form-input"
+                      style={{ paddingLeft: '14px' }}
+                      type="text"
+                      placeholder="e.g. UTR / IMPS / Cheque / Cash voucher #"
+                      value={confirmModal.paymentReference || ''}
+                      onChange={(e) =>
+                        setConfirmModal((prev) => ({ ...prev, paymentReference: e.target.value }))
+                      }
+                      disabled={confirmModal.processing}
+                    />
+                  </div>
+
+                  <div className="form-group">
+                    <label className="form-label" htmlFor="payment-notes-input">
+                      Disbursal Notes / Remarks (Optional)
+                    </label>
+                    <input
+                      id="payment-notes-input"
+                      className="form-input"
+                      style={{ paddingLeft: '14px' }}
+                      type="text"
+                      placeholder="e.g. Direct transfer to vendor account completed"
+                      value={confirmModal.notes || ''}
+                      onChange={(e) =>
+                        setConfirmModal((prev) => ({ ...prev, notes: e.target.value }))
+                      }
+                      disabled={confirmModal.processing}
+                    />
+                  </div>
+                </div>
+              )}
 
               {confirmModal.action !== 'mark-paid' && (
                 <div className="form-group">
@@ -1137,7 +1637,7 @@ function ApprovalQueue() {
                   ) : confirmModal.action === 'reject' ? (
                     'Confirm Reject'
                   ) : confirmModal.action === 'mark-paid' ? (
-                    'Confirm Mark Paid'
+                    role === 'ACCOUNTANT' ? 'Disburse & Loopback to Treasurer' : (confirmModal.claim?.accountantPaid ? 'Confirm & Finalize Mark Paid' : 'Confirm Mark Paid')
                   ) : (
                     'Confirm Raise Query'
                   )}
@@ -1147,6 +1647,298 @@ function ApprovalQueue() {
           </div>
         </div>
       )}
+      {/* ── Treasurer Official Monthly Indent Modal ── */}
+      {showIndentModal && (
+        <div className="details-modal-overlay" onClick={() => setShowIndentModal(false)}>
+          <div
+            className="details-modal-card"
+            style={{ maxWidth: '850px', width: '95%' }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="modal-header">
+              <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                <span style={{ fontSize: '22px' }}>📋</span>
+                <div>
+                  <h3 className="modal-title" style={{ margin: 0 }}>
+                    Treasurer Monthly Indent &amp; Reconciliation
+                  </h3>
+                  <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>
+                    Reconciles advance buffer disbursements, Accountant payouts, and paper bills for Dean Students.
+                  </span>
+                </div>
+              </div>
+              <button className="modal-close-btn" onClick={() => setShowIndentModal(false)}>
+                <HiOutlineX />
+              </button>
+            </div>
+
+            <div className="modal-body" style={{ maxHeight: '75vh', overflowY: 'auto' }}>
+              {/* Month Selector bar */}
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '12px', marginBottom: '16px', background: 'var(--bg-secondary)', padding: '12px 16px', borderRadius: 'var(--radius-md)' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                  <label htmlFor="indent-modal-month" style={{ fontSize: '13px', fontWeight: 600 }}>Select Month:</label>
+                  <input
+                    id="indent-modal-month"
+                    type="month"
+                    className="form-input"
+                    style={{ width: '160px', height: '36px', fontSize: '13px', paddingLeft: '12px' }}
+                    value={indentMonth}
+                    onChange={(e) => {
+                      setIndentMonth(e.target.value);
+                      loadIndentSummary(e.target.value);
+                    }}
+                  />
+                  <button
+                    className="btn-secondary"
+                    onClick={() => loadIndentSummary(indentMonth)}
+                    style={{ padding: '6px 12px', height: '36px', fontSize: '12px', display: 'flex', alignItems: 'center', gap: '4px' }}
+                  >
+                    <HiOutlineRefresh /> Refresh
+                  </button>
+                </div>
+
+                <button
+                  className="btn-primary"
+                  onClick={handleDownloadIndent}
+                  disabled={exportingIndent}
+                  style={{ padding: '8px 18px', height: '36px', fontSize: '13px', display: 'flex', alignItems: 'center', gap: '6px' }}
+                  id="btn-download-indent-xlsx"
+                >
+                  {exportingIndent ? <><span className="btn-spinner" /> Generating…</> : <><HiOutlineDocumentDownload style={{ fontSize: '16px' }} /> Download Official Indent (.xlsx)</>}
+                </button>
+              </div>
+
+              {/* KPI Summary Cards */}
+              {loadingIndent ? (
+                <div style={{ padding: '36px', display: 'flex', justifyContent: 'center' }}>
+                  <div className="btn-spinner" style={{ width: '32px', height: '32px', border: '3px solid rgba(79,124,130,0.2)', borderTopColor: 'var(--wc-300)' }} />
+                </div>
+              ) : indentSummary ? (
+                <>
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: '10px', marginBottom: '18px' }}>
+                    <div style={{ background: 'white', border: '1px solid var(--border-light)', borderRadius: 'var(--radius-sm)', padding: '10px 14px' }}>
+                      <div style={{ fontSize: '11px', fontWeight: 600, color: 'var(--text-muted)', textTransform: 'uppercase' }}>Monthly Advance</div>
+                      <div style={{ fontSize: '17px', fontWeight: 800, color: 'var(--text-primary)', marginTop: '2px' }}>
+                        ₹{indentSummary.monthlyAdvance?.toLocaleString('en-IN', { minimumFractionDigits: 2 })}
+                      </div>
+                      <div style={{ fontSize: '11px', color: 'var(--text-secondary)', marginTop: '2px' }}>
+                        Bal: <strong style={{ color: indentSummary.currentBalance < 10000 ? '#ef4444' : '#10b981' }}>₹{indentSummary.currentBalance?.toLocaleString('en-IN')}</strong>
+                      </div>
+                    </div>
+
+                    <div style={{ background: 'white', border: '1px solid var(--border-light)', borderRadius: 'var(--radius-sm)', padding: '10px 14px' }}>
+                      <div style={{ fontSize: '11px', fontWeight: 600, color: 'var(--text-muted)', textTransform: 'uppercase' }}>Buffer Payouts</div>
+                      <div style={{ fontSize: '17px', fontWeight: 800, color: 'var(--wc-200)', marginTop: '2px' }}>
+                        ₹{indentSummary.bufferTotal?.toLocaleString('en-IN', { minimumFractionDigits: 2 })}
+                      </div>
+                      <div style={{ fontSize: '11px', color: 'var(--text-secondary)', marginTop: '2px' }}>
+                        {indentSummary.bufferClaimsCount || 0} claims settled
+                      </div>
+                    </div>
+
+                    <div style={{ background: 'white', border: '1px solid var(--border-light)', borderRadius: 'var(--radius-sm)', padding: '10px 14px' }}>
+                      <div style={{ fontSize: '11px', fontWeight: 600, color: 'var(--text-muted)', textTransform: 'uppercase' }}>Central Accountant</div>
+                      <div style={{ fontSize: '17px', fontWeight: 800, color: '#3b82f6', marginTop: '2px' }}>
+                        ₹{indentSummary.accountantTotal?.toLocaleString('en-IN', { minimumFractionDigits: 2 })}
+                      </div>
+                      <div style={{ fontSize: '11px', color: 'var(--text-secondary)', marginTop: '2px' }}>
+                        {indentSummary.accountantClaimsCount || 0} routed claims
+                      </div>
+                    </div>
+
+                    <div style={{ background: 'white', border: '1px solid var(--border-light)', borderRadius: 'var(--radius-sm)', padding: '10px 14px' }}>
+                      <div style={{ fontSize: '11px', fontWeight: 600, color: 'var(--text-muted)', textTransform: 'uppercase' }}>Total Disbursed</div>
+                      <div style={{ fontSize: '17px', fontWeight: 800, color: '#10b981', marginTop: '2px' }}>
+                        ₹{indentSummary.totalDisbursed?.toLocaleString('en-IN', { minimumFractionDigits: 2 })}
+                      </div>
+                      <div style={{ fontSize: '11px', color: 'var(--text-secondary)', marginTop: '2px' }}>
+                        {indentSummary.totalClaimsCount || 0} claims ({indentSummary.totalBills || 0} bills)
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Buffer Exhaustion Status Alert */}
+                  <div style={{
+                    padding: '10px 14px',
+                    borderRadius: 'var(--radius-sm)',
+                    marginBottom: '16px',
+                    background: indentSummary.isBufferExhausted ? 'rgba(239, 68, 68, 0.08)' : 'rgba(16, 185, 129, 0.08)',
+                    border: `1px solid ${indentSummary.isBufferExhausted ? 'rgba(239, 68, 68, 0.25)' : 'rgba(16, 185, 129, 0.25)'}`,
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'space-between',
+                    fontSize: '13px',
+                  }}>
+                    <span>
+                      <strong>Buffer Status for {indentSummary.targetMonth}: </strong>
+                      <span style={{ color: indentSummary.isBufferExhausted ? '#ef4444' : '#10b981', fontWeight: 700 }}>
+                        {indentSummary.isBufferExhausted ? 'EXHAUSTED (0.00 Balance Remaining)' : 'SURPLUS AVAILABLE (Buffer Healthy)'}
+                      </span>
+                    </span>
+                    <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>
+                      Total {indentSummary.totalBills || 0} physical bills to audit
+                    </span>
+                  </div>
+
+                  {/* Reconciliation Claims Table */}
+                  <h4 style={{ fontSize: '13.5px', fontWeight: 700, margin: '0 0 8px', color: 'var(--text-primary)' }}>
+                    Reconciled Claims for {indentMonth} ({indentSummary.reimbursements?.length || 0})
+                  </h4>
+                  {indentSummary.reimbursements && indentSummary.reimbursements.length > 0 ? (
+                    <div style={{ overflowX: 'auto', border: '1px solid var(--border-light)', borderRadius: 'var(--radius-sm)' }}>
+                      <table className="claims-table" style={{ margin: 0, fontSize: '12.5px' }}>
+                        <thead>
+                          <tr>
+                            <th>#</th>
+                            <th>Paid Date</th>
+                            <th>Club / Committee</th>
+                            <th>Event</th>
+                            <th>Payee &amp; Mode</th>
+                            <th>Channel</th>
+                            <th style={{ textAlign: 'right' }}>Amount (₹)</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {indentSummary.reimbursements.map((r, idx) => (
+                            <tr key={r.id}>
+                              <td style={{ color: 'var(--text-muted)' }}>{idx + 1}</td>
+                              <td>{new Date(r.paidAt).toLocaleDateString('en-IN')}</td>
+                              <td className="cell-bold">{r.committee}</td>
+                              <td>{r.event}</td>
+                              <td>
+                                <span style={{ fontWeight: 600 }}>{r.beneficiaryName || 'Beneficiary'}</span>
+                                <span style={{ display: 'block', fontSize: '11px', color: 'var(--text-muted)' }}>
+                                  {r.paymentMode} {r.paymentReference ? `• ${r.paymentReference}` : ''}
+                                </span>
+                              </td>
+                              <td>
+                                <span style={{
+                                  fontSize: '11px',
+                                  padding: '2px 7px',
+                                  borderRadius: '10px',
+                                  fontWeight: 600,
+                                  background: r.fundingChannel === 'Treasurer Buffer' ? 'rgba(16, 185, 129, 0.1)' : 'rgba(59, 130, 246, 0.1)',
+                                  color: r.fundingChannel === 'Treasurer Buffer' ? '#10b981' : '#3b82f6',
+                                }}>
+                                  {r.fundingChannel}
+                                </span>
+                              </td>
+                              <td style={{ textAlign: 'right', fontWeight: 700, color: 'var(--wc-200)' }}>
+                                ₹{r.amount.toLocaleString('en-IN', { minimumFractionDigits: 2 })}
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  ) : (
+                    <div style={{ padding: '24px', textAlign: 'center', background: 'var(--bg-secondary)', borderRadius: 'var(--radius-sm)', color: 'var(--text-muted)', fontSize: '13px' }}>
+                      No cleared or disbursed reimbursement claims found for {indentMonth}.
+                    </div>
+                  )}
+                </>
+              ) : null}
+            </div>
+
+            <div className="modal-footer" style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px', padding: '14px 20px', borderTop: '1px solid var(--border-light)' }}>
+              <button className="btn-secondary" onClick={() => setShowIndentModal(false)}>
+                Close
+              </button>
+              <button
+                className="btn-primary"
+                onClick={handleDownloadIndent}
+                disabled={exportingIndent}
+                style={{ display: 'flex', alignItems: 'center', gap: '6px' }}
+              >
+                {exportingIndent ? <><span className="btn-spinner" /> Generating…</> : <><HiOutlineDocumentDownload /> Download Indent (.xlsx)</>}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Quick Top-Up Modal ── */}
+      {showTopUpModal && (
+        <div className="details-modal-overlay" onClick={() => setShowTopUpModal(false)}>
+          <div
+            className="details-modal-card"
+            style={{ maxWidth: '420px' }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="modal-header">
+              <h3 className="modal-title">Top-Up Advance Buffer</h3>
+              <button className="modal-close-btn" onClick={() => setShowTopUpModal(false)}>
+                <HiOutlineX />
+              </button>
+            </div>
+            <form onSubmit={handleQuickTopUp} style={{ padding: '20px' }}>
+              <p style={{ fontSize: '13px', color: 'var(--text-secondary)', marginBottom: '16px' }}>
+                Add funds to the Treasurer Advance Buffer for immediate reimbursement payouts. Current Balance: <strong>₹{bufferStatus?.currentBalance?.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</strong>
+              </p>
+              <div className="form-group" style={{ marginBottom: '14px' }}>
+                <label className="form-label" htmlFor="quick-topup-amount">Top-Up Amount (₹)</label>
+                <input
+                  id="quick-topup-amount"
+                  className="form-input"
+                  style={{ paddingLeft: '14px' }}
+                  type="number"
+                  min="1"
+                  placeholder="e.g. 15000"
+                  value={topUpAmount}
+                  onChange={(e) => setTopUpAmount(e.target.value)}
+                  required
+                />
+              </div>
+              <div className="form-group" style={{ marginBottom: '18px' }}>
+                <label className="form-label" htmlFor="quick-topup-notes">Notes / Reason (Optional)</label>
+                <input
+                  id="quick-topup-notes"
+                  className="form-input"
+                  style={{ paddingLeft: '14px' }}
+                  type="text"
+                  placeholder="e.g. Mid-month event top-up"
+                  value={topUpNotes}
+                  onChange={(e) => setTopUpNotes(e.target.value)}
+                />
+              </div>
+              <div className="form-actions" style={{ margin: 0 }}>
+                <button type="button" className="btn-secondary" onClick={() => setShowTopUpModal(false)} disabled={toppingUp}>
+                  Cancel
+                </button>
+                <button type="submit" className="btn-primary" id="btn-submit-quick-topup" disabled={toppingUp}>
+                  {toppingUp ? <><span className="btn-spinner" /> Adding…</> : 'Confirm Top-Up'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+      {/* ── Digital Signature Modal for Approvals ── */}
+      <SignaturePadModal
+        isOpen={signatureModal.open}
+        onClose={() => setSignatureModal({ open: false, claim: null, processing: false })}
+        onConfirm={handleSignedApprove}
+        title="Digitally Sign & Approve Claim"
+        actionLabel="Sign & Approve"
+        actionColor="#2a9d6e"
+        requireRemark={false}
+        remarkLabel="Approval Remark / Notes (optional)"
+        remarkPlaceholder="e.g. Verified bills against cycle quota; recommended for advance approval."
+        claimInfo={signatureModal.claim ? {
+          committee: signatureModal.claim.committee,
+          event: signatureModal.claim.event,
+          amount: signatureModal.claim.amount,
+        } : null}
+        processing={signatureModal.processing}
+      />
+
+      {/* ── Sanction Certificate Viewer Modal ── */}
+      <SanctionCertificateModal
+        isOpen={certModal.open}
+        onClose={() => setCertModal({ open: false, certificate: null, loading: false })}
+        certificate={certModal.certificate}
+        loading={certModal.loading}
+      />
     </div>
   );
 }

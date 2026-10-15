@@ -49,7 +49,7 @@ function App() {
         <Route
           path="/admin/dashboard"
           element={
-            <ProtectedRoute allowedRoles={['ADMINISTRATOR', 'SUPER_ADMIN']}>
+            <ProtectedRoute allowedRoles={['ADMINISTRATOR', 'SUPER_ADMIN', 'FACULTY_MENTOR', 'DEAN_STUDENTS', 'ACCOUNTANT']}>
               <ApprovalQueue />
             </ProtectedRoute>
           }
@@ -57,7 +57,7 @@ function App() {
         <Route
           path="/admin/history"
           element={
-            <ProtectedRoute allowedRoles={['ADMINISTRATOR', 'SUPER_ADMIN']}>
+            <ProtectedRoute allowedRoles={['ADMINISTRATOR', 'SUPER_ADMIN', 'FACULTY_MENTOR', 'DEAN_STUDENTS', 'ACCOUNTANT']}>
               <ApprovalHistory />
             </ProtectedRoute>
           }

@@ -15,8 +15,14 @@ export const getApprovalHistory = async () => {
   return response.data;
 };
 
-export const approveReimbursement = async (id, remark = '') => {
-  const response = await api.post(`/admin/reimbursements/${id}/approve`, { remark });
+export const approveReimbursement = async (id, payload = {}) => {
+  const body = typeof payload === 'string' ? { remark: payload } : payload;
+  const response = await api.post(`/admin/reimbursements/${id}/approve`, body);
+  return response.data;
+};
+
+export const getSignatureAuditCertificate = async (id) => {
+  const response = await api.get(`/admin/reimbursements/${id}/signature-audit`);
   return response.data;
 };
 
@@ -31,8 +37,8 @@ export const raiseQueryOnReimbursement = async (id, remark) => {
 };
 
 // Mark an APPROVED reimbursement as paid (SUPER_ADMIN only)
-export const markAsPaid = async (id) => {
-  const response = await api.post(`/admin/reimbursements/${id}/mark-paid`);
+export const markAsPaid = async (id, payload = {}) => {
+  const response = await api.post(`/admin/reimbursements/${id}/mark-paid`, payload);
   return response.data;
 };
 
@@ -56,8 +62,8 @@ export const listUsers = async () => {
   return response.data;
 };
 
-export const createUser = async ({ name, email }) => {
-  const response = await api.post('/admin/users', { name, email });
+export const createUser = async ({ name, email, designation, clubName }) => {
+  const response = await api.post('/admin/users', { name, email, designation, clubName });
   return response.data;
 };
 
@@ -83,6 +89,87 @@ export const deleteAdmin = async (id) => {
   return response.data;
 };
 
+export const listFacultyMentors = async () => {
+  const response = await api.get('/admin/faculty-mentors');
+  return response.data;
+};
+
+// ── Club-Mentor Mappings ──
+
+export const listClubMappings = async () => {
+  const response = await api.get('/admin/club-mappings');
+  return response.data;
+};
+
+export const upsertClubMapping = async ({ clubName, facultyMentorId }) => {
+  const response = await api.post('/admin/club-mappings', { clubName, facultyMentorId });
+  return response.data;
+};
+
+export const deleteClubMapping = async (id) => {
+  const response = await api.delete(`/admin/club-mappings/${id}`);
+  return response.data;
+};
+
+// ── Treasurer Advance Buffer Management ──
+
+export const getBufferStatus = async () => {
+  const response = await api.get('/admin/buffer');
+  return response.data;
+};
+
+export const replenishBuffer = async ({ amount, month, notes }) => {
+  const response = await api.post('/admin/buffer/replenish', { amount, month, notes });
+  return response.data;
+};
+
+export const topUpBuffer = async ({ amount, notes }) => {
+  const response = await api.post('/admin/buffer/top-up', { amount, notes });
+  return response.data;
+};
+
+// ── Monthly Projections (Treasurer Admin View) ──
+
+export const setProjectionWindow = async ({ targetMonth, deadline, instructions }) => {
+  const response = await api.post('/projections/window', { targetMonth, deadline, instructions });
+  return response.data;
+};
+
+export const listProjections = async (month = '') => {
+  const params = month ? { month } : {};
+  const response = await api.get('/projections/list', { params });
+  return response.data;
+};
+
+// ── Treasurer Monthly Indent Export (.xlsx) & Summary ──
+
+export const getIndentSummary = async (month = '') => {
+  const params = month ? { month } : {};
+  const response = await api.get('/admin/indent/summary', { params });
+  return response.data;
+};
+
+export const exportTreasurerMonthlyIndent = async (month = '') => {
+  const params = month ? { month } : {};
+  const response = await api.get('/admin/indent/export', {
+    params,
+    responseType: 'blob',
+  });
+
+  const blob = new Blob([response.data], {
+    type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  });
+  const url = window.URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  const fileName = `Treasurer_Monthly_Indent_${month || 'Current'}.xlsx`;
+  link.setAttribute('download', fileName);
+  document.body.appendChild(link);
+  link.click();
+  link.parentNode.removeChild(link);
+  window.URL.revokeObjectURL(url);
+};
+
 // ── Positions (SUPER_ADMIN role) ──
 
 export const listPositions = async () => {
@@ -102,5 +189,23 @@ export const updatePosition = async (id, { name, priority }) => {
 
 export const deletePosition = async (id) => {
   const response = await api.delete(`/admin/positions/${id}`);
+  return response.data;
+};
+
+// ── Club Budget Allocation (Treasurer → per-club per-month) ──
+
+export const getClubBudgets = async (month = '') => {
+  const params = month ? { month } : {};
+  const response = await api.get('/admin/club-budgets', { params });
+  return response.data; // { targetMonth, budgets: [...] }
+};
+
+export const upsertClubBudget = async ({ clubName, targetMonth, allocatedAmount, notes }) => {
+  const response = await api.post('/admin/club-budgets', { clubName, targetMonth, allocatedAmount, notes });
+  return response.data;
+};
+
+export const deleteClubBudget = async (id) => {
+  const response = await api.delete(`/admin/club-budgets/${id}`);
   return response.data;
 };
