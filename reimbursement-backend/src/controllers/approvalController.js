@@ -151,8 +151,10 @@ async function getVisibleReimbursements(req, res) {
         where.currentStage = "DEAN_STUDENTS";
       }
     } else if (admin.role === "ACCOUNTANT") {
-      // Accountant: claims flagged as routedToAccountant or audit access
+      // Accountant: only claims that have reached ACCOUNTANT_REVIEW stage in pending queue
       if (status === "PENDING") {
+        where.currentStage = "ACCOUNTANT_REVIEW";
+      } else {
         where.routedToAccountant = true;
       }
     } else if (admin.position) {
@@ -387,8 +389,8 @@ async function approveReimbursement(req, res) {
 
       // ── Stage 3: Dean Students Sanction
       if (reimbursement.currentStage === "DEAN_STUDENTS" || currentPriority === 3) {
-        // If Post-Event (Over-Projection / Unplanned) -> Routes to Accountant
-        if (reimbursement.claimType === "POST_EVENT" || reimbursement.routedToAccountant) {
+        // If claimed amount exceeds treasurer buffer -> Routes to Accountant
+        if (reimbursement.routedToAccountant || !reimbursement.withinBuffer) {
           const updatedReimbursement = await tx.reimbursement.update({
             where: { id },
             data: {
@@ -824,8 +826,8 @@ async function markAsPaid(req, res) {
       // ── Step 2 in Accountant Flow / Direct in Advance Flow: Treasurer final payment mark-off & budget debit
       let paidFromBuffer = false;
 
-      // 1. Debit from Treasurer Buffer / Cycle buffer if applicable
-      if (reimbursement.withinBuffer && !reimbursement.routedToAccountant) {
+      // 1. Debit from Treasurer Buffer if claim was within buffer
+      if (reimbursement.withinBuffer) {
         paidFromBuffer = true;
         const now = new Date();
         const currentMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;

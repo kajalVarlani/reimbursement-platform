@@ -185,39 +185,33 @@ async function createReimbursement(req, res) {
         ? Math.max(0, clubProjection.totalEstimatedAmount - (clubProjection.spentAmount || 0))
         : 0;
 
-      // Advance/Within-Buffer qualification: must be within approved projection AND within club budget
-      const isWithinProjection = Boolean(
-        clubProjection &&
-        totalClaimedAmount <= remainingProjectionQuota &&
-        !exceedsClubBudget
-      );
-      const claimType = isWithinProjection ? "ADVANCE" : "POST_EVENT";
-      const routedToAccountant = !isWithinProjection;
-
-      // Determine reason for routing to Accountant flow
-      let accountantReason = null;
-      if (!isWithinProjection) {
-        if (exceedsClubBudget && clubProjection && totalClaimedAmount > remainingProjectionQuota) {
-          accountantReason = `Claim amount ₹${totalClaimedAmount.toLocaleString()} exceeds both club remaining budget (₹${remainingClubBudget.toLocaleString()} available) and cycle projection quota (₹${remainingProjectionQuota.toLocaleString()} remaining). Routed to Accountant.`;
-        } else if (exceedsClubBudget) {
-          accountantReason = `Claim amount ₹${totalClaimedAmount.toLocaleString()} exceeds club remaining sanctioned budget (₹${remainingClubBudget.toLocaleString()} available). Routed to Central Accountant for post-event audit.`;
-        } else {
-          accountantReason = `Claim amount ₹${totalClaimedAmount.toLocaleString()} exceeds approved cycle projection quota (₹${remainingProjectionQuota.toLocaleString()} remaining). Routed to Central Accountant review.`;
-        }
-      }
-
-      // Check current available buffer status
+      // 3. Check current available Treasurer buffer
       const now = new Date();
       const currentMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
-      const buffer = await tx.treasurerBuffer.findFirst({
+      let buffer = await tx.treasurerBuffer.findFirst({
         where: { currentMonth },
         orderBy: { updatedAt: "desc" },
       });
+      if (!buffer) {
+        buffer = await tx.treasurerBuffer.findFirst({
+          orderBy: { updatedAt: "desc" },
+        });
+      }
 
       const availableBuffer = activeCycle
         ? Math.max(0, activeCycle.bufferAmount - activeCycle.usedBufferAmount)
         : (buffer ? buffer.currentBalance : 50000.0);
-      const withinBuffer = Boolean(isWithinProjection && totalClaimedAmount <= availableBuffer);
+
+      // Flow 1: If claimed amount <= available Treasurer buffer, it is within buffer and does NOT involve accountant.
+      // Flow 2: If claimed amount > available buffer, it exceeds buffer and must be routed to accountant.
+      const withinBuffer = totalClaimedAmount <= availableBuffer;
+      const routedToAccountant = !withinBuffer;
+      const claimType = withinBuffer ? "ADVANCE" : "POST_EVENT";
+
+      let accountantReason = null;
+      if (routedToAccountant) {
+        accountantReason = `Claim amount ₹${totalClaimedAmount.toLocaleString()} exceeds available Treasurer buffer (₹${availableBuffer.toLocaleString()} available). Routed to Central Accountant review.`;
+      }
 
       // 4. Create reimbursement with Stage 1: TREASURER
       const r = await tx.reimbursement.create({
