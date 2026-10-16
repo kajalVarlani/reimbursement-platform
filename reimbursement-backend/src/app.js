@@ -12,18 +12,23 @@ const indentRoutes = require("./routes/indentRoutes");
 
 const app = express();
 
+const configuredOrigins = (process.env.FRONTEND_URL || "")
+  .split(",")
+  .map((o) => o.trim().replace(/\/+$/, ""))
+  .filter(Boolean);
+
 const allowedOrigins = [
-  process.env.FRONTEND_URL,
+  ...configuredOrigins,
   "http://localhost:5173",
   "http://localhost:3000",
-].filter(Boolean).map((o) => o.replace(/\/$/, "")); // strip trailing slash
+];
 
 app.use(
   cors({
     origin: (origin, callback) => {
-      // Allow server-to-server / Postman (no origin header)
+      // Allow server-to-server / Postman / Render health checks (no origin header)
       if (!origin) return callback(null, true);
-      const clean = origin.replace(/\/$/, "");
+      const clean = origin.replace(/\/+$/, "");
       if (allowedOrigins.includes(clean)) return callback(null, true);
       callback(new Error(`CORS: origin ${origin} not allowed`));
     },
@@ -33,18 +38,22 @@ app.use(
 app.use(express.json({ limit: "10mb" }));
 app.use(express.urlencoded({ extended: true, limit: "10mb" }));
 
+// Health check / root
+app.get(["/", "/api", "/api/health"], (req, res) => {
+  res.json({ status: "ok", message: "Reimbursement Platform API is running" });
+});
 
-// Admin Routes
-app.use("/api/admin/auth", adminAuthRoutes);
-app.use("/api/admin/reimbursements", approvalRoutes);
-app.use("/api/admin/indent", indentRoutes);
-app.use("/api/admin", adminRoutes);
+// Admin Routes (mounted with and without /api prefix for deployment robustness)
+app.use(["/api/admin/auth", "/admin/auth"], adminAuthRoutes);
+app.use(["/api/admin/reimbursements", "/admin/reimbursements"], approvalRoutes);
+app.use(["/api/admin/indent", "/admin/indent"], indentRoutes);
+app.use(["/api/admin", "/admin"], adminRoutes);
 
 // Monthly Projections Routes
-app.use("/api/projections", projectionRoutes);
+app.use(["/api/projections", "/projections"], projectionRoutes);
 
 // User Routes
-app.use("/api/user/auth", userAuthRoutes);
-app.use("/api/user/reimbursements", reimbursementRoutes);
+app.use(["/api/user/auth", "/user/auth"], userAuthRoutes);
+app.use(["/api/user/reimbursements", "/user/reimbursements"], reimbursementRoutes);
 
 module.exports = app;
