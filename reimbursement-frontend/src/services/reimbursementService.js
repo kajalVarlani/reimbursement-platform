@@ -116,3 +116,13 @@ export const extractBillFromPdf = async (file) => {
 };
 
 
+export const generateReimbursementSummary = async (bill, validation) => {
+  const response = await api.post('/user/reimbursements/generate-summary', {
+    bill,
+    validation,
+  });
+
+  return response.data;
+};
+
+

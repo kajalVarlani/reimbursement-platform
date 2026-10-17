@@ -13,6 +13,9 @@ const {
 } = require("../controllers/reimbursementController");
 const { attachBill, detachBill, getBills } = require("../controllers/billController");
 const { extractBill } = require("../controllers/documentController");
+const {
+  generateSummary,
+} = require("../controllers/reimbursementSummaryController");
 
 const router = express.Router();
 
@@ -34,6 +37,22 @@ if (process.env.NODE_ENV !== "production") {
     upload.single("receipt"),
     extractBill
   );
+
+  // TEMPORARY: development-only AI summary testing.
+  router.post(
+    "/generate-summary",
+    (req, res, next) => {
+      req.user = {
+        id: "dev-user-001",
+        name: "Demo Student",
+        email: "student@reimbursement.com",
+        role: "USER",
+      };
+
+      next();
+    },
+    generateSummary
+  );
 }
 
 
@@ -41,6 +60,9 @@ router.use(userAuthMiddleware);
 
 // AI-powered PDF bill extraction
 router.post("/extract-bill", upload.single("receipt"), extractBill);
+
+// AI-powered reimbursement summary
+router.post("/generate-summary", generateSummary);
 
 // ── Club Budget (C/DC) ─────────────────────────────────────────────────────
 router.get("/budget", getMyClubBudget);

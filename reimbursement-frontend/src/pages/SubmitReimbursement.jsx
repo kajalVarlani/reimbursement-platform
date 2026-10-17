@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useSelector, useDispatch } from 'react-redux';
 import { logout } from '../store/authSlice';
-import { createReimbursement, getMyClubBudget, extractBillFromPdf } from '../services/reimbursementService';
+import { createReimbursement, getMyClubBudget, extractBillFromPdf, generateReimbursementSummary } from '../services/reimbursementService';
 import {
   HiOutlineUpload,
   HiOutlineChevronLeft,
@@ -80,6 +80,9 @@ function SubmitReimbursement() {
       dragActive: false,
       extractionLoading: false,
       extractionError: '',
+      aiSummary: '',
+      summaryLoading: false,
+      summaryError: '',
     }
   ]);
 
@@ -105,6 +108,9 @@ function SubmitReimbursement() {
         dragActive: false,
         extractionLoading: false,
         extractionError: '',
+        aiSummary: '',
+        summaryLoading: false,
+        summaryError: '',
       }
     ]);
   };
@@ -180,6 +186,31 @@ const handleDrop = (index, e) => {
           };
         })
       );
+
+      
+      // Generate the AI summary independently of extraction.
+      updateBillField(index, 'summaryLoading', true);
+      updateBillField(index, 'summaryError', '');
+
+      try {
+        const summaryResult = await generateReimbursementSummary(
+          extracted,
+          result.validation
+        );
+
+        updateBillField(index, 'aiSummary', summaryResult.summary);
+      } catch (summaryError) {
+        console.error('AI summary generation failed:', summaryError);
+
+        updateBillField(
+          index,
+          'summaryError',
+          summaryError.response?.data?.message ||
+            'Could not generate the AI summary.'
+        );
+      } finally {
+        updateBillField(index, 'summaryLoading', false);
+      }
 
       if (result.validation?.warnings?.length) {
         toast(
@@ -630,6 +661,48 @@ const handleDrop = (index, e) => {
                     />
                   </div>
                 </div>
+
+                
+                {/* AI Reimbursement Summary */}
+                {(bill.summaryLoading ||
+                  bill.aiSummary ||
+                  bill.summaryError) && (
+                  <div
+                    style={{
+                      marginTop: '18px',
+                      padding: '16px',
+                      border: '1px solid var(--wc-100)',
+                      borderRadius: '10px',
+                      background: 'var(--bg-secondary)',
+                    }}
+                  >
+                    <h4 style={{ margin: '0 0 10px' }}>
+                      ✨ AI Reimbursement Summary
+                    </h4>
+
+                    {bill.summaryLoading && (
+                      <p>Generating AI summary...</p>
+                    )}
+
+                    {bill.summaryError && (
+                      <p style={{ color: '#dc2626' }}>
+                        {bill.summaryError}
+                      </p>
+                    )}
+
+                    {bill.aiSummary && (
+                      <div
+                        style={{
+                          whiteSpace: 'pre-wrap',
+                          lineHeight: 1.6,
+                          fontSize: '14px',
+                        }}
+                      >
+                        {bill.aiSummary}
+                      </div>
+                    )}
+                  </div>
+                )}
 
                 {/* Scanned File Upload */}
                 <div className="form-group" style={{ marginTop: '16px' }}>
