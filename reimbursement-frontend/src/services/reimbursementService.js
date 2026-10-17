@@ -92,3 +92,27 @@ export const getSignatureAuditCertificate = async (id) => {
   return response.data;
 };
 
+
+
+/**
+ * Extract structured bill information from a PDF.
+ * This does not create a bill or submit a reimbursement.
+ */
+export const extractBillFromPdf = async (file) => {
+  const formData = new FormData();
+  formData.append('receipt', file);
+
+  const response = await api.post(
+    '/user/reimbursements/extract-bill',
+    formData,
+    {
+      headers: {
+        'Content-Type': 'multipart/form-data',
+      },
+    }
+  );
+
+  return response.data;
+};
+
+

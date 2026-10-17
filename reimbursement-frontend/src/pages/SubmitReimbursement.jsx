@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useSelector, useDispatch } from 'react-redux';
 import { logout } from '../store/authSlice';
-import { createReimbursement, getMyClubBudget } from '../services/reimbursementService';
+import { createReimbursement, getMyClubBudget, extractBillFromPdf } from '../services/reimbursementService';
 import {
   HiOutlineUpload,
   HiOutlineChevronLeft,
@@ -78,6 +78,8 @@ function SubmitReimbursement() {
       billDate: '',
       file: null,
       dragActive: false,
+      extractionLoading: false,
+      extractionError: '',
     }
   ]);
 
@@ -101,6 +103,8 @@ function SubmitReimbursement() {
         billDate: '',
         file: null,
         dragActive: false,
+        extractionLoading: false,
+        extractionError: '',
       }
     ]);
   };
@@ -121,25 +125,95 @@ function SubmitReimbursement() {
     }
   };
 
-  const handleDrop = (index, e) => {
-    e.preventDefault();
-    e.stopPropagation();
-    updateBillField(index, 'dragActive', false);
-    if (e.dataTransfer.files && e.dataTransfer.files[0]) {
-      const selectedFile = e.dataTransfer.files[0];
-      if (validateFile(selectedFile)) {
-        updateBillField(index, 'file', selectedFile);
+  
+const handleDrop = (index, e) => {
+  e.preventDefault();
+  e.stopPropagation();
+
+  updateBillField(index, 'dragActive', false);
+
+  const selectedFile = e.dataTransfer.files?.[0];
+
+  if (selectedFile) {
+    handleSelectedFile(index, selectedFile);
+  }
+};
+
+
+  
+  const handleSelectedFile = async (index, selectedFile) => {
+    if (!validateFile(selectedFile)) return;
+
+    // Keep the existing file upload behavior
+    updateBillField(index, 'file', selectedFile);
+    updateBillField(index, 'extractionError', '');
+
+    // Only PDFs use AI extraction. Images continue to work as before.
+    if (selectedFile.type !== 'application/pdf') return;
+
+    updateBillField(index, 'extractionLoading', true);
+
+    try {
+      const result = await extractBillFromPdf(selectedFile);
+      const extracted = result.data;
+
+      setBills((prev) =>
+        prev.map((bill, billIndex) => {
+          if (billIndex !== index) return bill;
+
+          return {
+            ...bill,
+            vendorName: extracted.vendorName ?? bill.vendorName,
+            invoiceNumber: extracted.invoiceNumber ?? bill.invoiceNumber,
+            transactionId: extracted.transactionId ?? bill.transactionId,
+            billDate: extracted.billDate ?? bill.billDate,
+            amount:
+              extracted.amount != null
+                ? String(extracted.amount)
+                : bill.amount,
+            allocatedAmount:
+              !bill.allocatedAmount && extracted.amount != null
+                ? String(extracted.amount)
+                : bill.allocatedAmount,
+            extractionLoading: false,
+            extractionError: '',
+          };
+        })
+      );
+
+      if (result.validation?.warnings?.length) {
+        toast(
+          `Extraction completed with ${result.validation.warnings.length} warning(s). Please review the bill.`,
+          { icon: '⚠️' }
+        );
+      } else {
+        toast.success('Bill details extracted. Please review them.');
       }
+    } catch (error) {
+      console.error('PDF extraction failed:', error);
+
+      updateBillField(
+        index,
+        'extractionError',
+        error.response?.data?.message ||
+          'Could not extract this PDF. You can enter the details manually.'
+      );
+
+      toast.error('PDF extraction failed. You can enter the details manually.');
+    } finally {
+      updateBillField(index, 'extractionLoading', false);
     }
   };
 
   const handleFileChange = (index, e) => {
-    if (e.target.files && e.target.files[0]) {
-      const selectedFile = e.target.files[0];
-      if (validateFile(selectedFile)) {
-        updateBillField(index, 'file', selectedFile);
-      }
+    const selectedFile = e.target.files?.[0];
+
+    if (selectedFile) {
+      handleSelectedFile(index, selectedFile);
     }
+
+    // Allows the same file to be selected again.
+    e.target.value = '';
   };
 
   const validateFile = (selectedFile) => {
@@ -424,6 +498,17 @@ function SubmitReimbursement() {
               <div key={index} style={{ border: '1px solid var(--wc-100)', borderRadius: '12px', padding: '20px', marginBottom: '24px', background: 'var(--card-bg-subtle, #f9fafb)', position: 'relative' }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px', borderBottom: '1px solid var(--wc-100)', paddingBottom: '10px' }}>
                   <span style={{ fontSize: '15px', fontWeight: 600, color: 'var(--text-main, #111827)' }}>Bill #{index + 1}</span>
+                  {bill.extractionLoading && (
+                    <span style={{ color: '#2563eb', fontSize: '13px' }}>
+                      Extracting bill details...
+                    </span>
+                  )}
+
+                  {bill.extractionError && (
+                    <p style={{ color: '#dc2626', fontSize: '13px' }}>
+                      {bill.extractionError}
+                    </p>
+                  )}
                   {bills.length > 1 && (
                     <button
                       type="button"
