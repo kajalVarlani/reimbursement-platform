@@ -12,10 +12,35 @@ const {
   getSignatureAuditCertificate,
 } = require("../controllers/reimbursementController");
 const { attachBill, detachBill, getBills } = require("../controllers/billController");
+const { extractBill } = require("../controllers/documentController");
 
 const router = express.Router();
 
+// TEMPORARY: development-only PDF extraction testing.
+// This route does not query PostgreSQL or require a JWT.
+if (process.env.NODE_ENV !== "production") {
+  router.post(
+    "/extract-bill",
+    (req, res, next) => {
+      req.user = {
+        id: "dev-user-001",
+        name: "Demo Student",
+        email: "student@reimbursement.com",
+        role: "USER",
+      };
+
+      next();
+    },
+    upload.single("receipt"),
+    extractBill
+  );
+}
+
+
 router.use(userAuthMiddleware);
+
+// AI-powered PDF bill extraction
+router.post("/extract-bill", upload.single("receipt"), extractBill);
 
 // ── Club Budget (C/DC) ─────────────────────────────────────────────────────
 router.get("/budget", getMyClubBudget);
