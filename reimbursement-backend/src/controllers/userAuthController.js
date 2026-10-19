@@ -14,48 +14,7 @@ async function login(req, res) {
       });
     }
 
-    // dummy user
     
-    // TEMPORARY LOCAL-TESTING LOGIN — REMOVE AFTER TESTING
-    if (process.env.NODE_ENV !== "production") {
-      const dummyEmail = "test@claimnest.local";
-      const dummyPassword = "ClaimNestDemo123!";
-
-      if (
-        email === dummyEmail &&
-        password === dummyPassword
-      ) {
-        if (!process.env.JWT_SECRET) {
-          return res.status(500).json({
-            message: "JWT_SECRET is not configured",
-          });
-        }
-
-        const dummyUser = {
-          id: "local-test-user",
-          name: "Test User",
-          email: dummyEmail,
-          role: "USER",
-          designation: "Student",
-          clubName: "Test Club",
-        };
-
-        const token = jwt.sign(
-          { id: dummyUser.id, role: dummyUser.role },
-          process.env.JWT_SECRET,
-          { expiresIn: "7d" }
-        );
-
-        return res.status(200).json({
-          message: "Login successful (temporary test account)",
-          token,
-          user: dummyUser,
-        });
-      }
-    }
-    // END TEMPORARY LOCAL-TESTING LOGIN
-
-
     const user = await prisma.user.findUnique({
       where: { email },
     });

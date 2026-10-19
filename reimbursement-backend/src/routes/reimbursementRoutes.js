@@ -19,42 +19,6 @@ const {
 
 const router = express.Router();
 
-// TEMPORARY: development-only PDF extraction testing.
-// This route does not query PostgreSQL or require a JWT.
-if (process.env.NODE_ENV !== "production") {
-  router.post(
-    "/extract-bill",
-    (req, res, next) => {
-      req.user = {
-        id: "dev-user-001",
-        name: "Demo Student",
-        email: "student@reimbursement.com",
-        role: "USER",
-      };
-
-      next();
-    },
-    upload.single("receipt"),
-    extractBill
-  );
-
-  // TEMPORARY: development-only AI summary testing.
-  router.post(
-    "/generate-summary",
-    (req, res, next) => {
-      req.user = {
-        id: "dev-user-001",
-        name: "Demo Student",
-        email: "student@reimbursement.com",
-        role: "USER",
-      };
-
-      next();
-    },
-    generateSummary
-  );
-}
-
 
 router.use(userAuthMiddleware);
 
