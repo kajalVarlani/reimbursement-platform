@@ -294,6 +294,7 @@ async function createReimbursement(req, res) {
             reimbursementId: r.id,
             billId: bill.id,
             allocatedAmount: billData.allocatedAmount,
+            aiSummary: billData.aiSummary || null,
           },
         });
       }

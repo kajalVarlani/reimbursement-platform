@@ -393,6 +393,7 @@ model ReimbursementBill {
   bill            Bill          @relation(fields: [billId], references: [id])
 
   allocatedAmount Float
+  aiSummary       String?
 
   createdAt       DateTime      @default(now())
 

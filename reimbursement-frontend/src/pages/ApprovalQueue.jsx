@@ -1372,6 +1372,50 @@ function ApprovalQueue() {
                       );
                     })}
                   </div>
+
+                  {/* AI-generated reimbursement summary */}
+                  <div
+                    style={{
+                      marginTop: '14px',
+                      padding: '14px',
+                      border: '1px solid var(--wc-100)',
+                      borderRadius: '8px',
+                      background: 'var(--bg-secondary, #f9fafb)',
+                    }}
+                  >
+                    <h4
+                      style={{
+                        margin: '0 0 10px',
+                        fontSize: '14px',
+                        fontWeight: 700,
+                      }}
+                    >
+                      ✨ AI Reimbursement Summary
+                    </h4>
+
+                    {rb.aiSummary ? (
+                      <div
+                        style={{
+                          whiteSpace: 'pre-wrap',
+                          lineHeight: 1.6,
+                          fontSize: '13px',
+                          color: 'var(--text-primary)',
+                        }}
+                      >
+                        {rb.aiSummary}
+                      </div>
+                    ) : (
+                      <p
+                        style={{
+                          margin: 0,
+                          fontSize: '13px',
+                          color: 'var(--text-muted)',
+                        }}
+                      >
+                        No AI summary is available for this bill.
+                      </p>
+                    )}
+                  </div>
                 </div>
               ) : (
                 <div className="detail-row" style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
