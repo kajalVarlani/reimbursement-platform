@@ -126,36 +126,49 @@ Rules:
     ],
   };
 
-  const response = await ai.models.generateContent({
-    model: "gemini-3.8-flash",
-    contents: [
-      {
-        role: "user",
-        parts: [
+  let response;
+  let lastError;
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    try {
+      response = await ai.models.generateContent({
+        model: "gemini-3.8-flash",
+        contents: [
           {
-            inlineData: {
-              mimeType: "application/pdf",
-              data: pdfBuffer.toString("base64"),
-            },
-          },
-          {
-            text: prompt,
+            role: "user",
+            parts: [
+              {
+                inlineData: {
+                  mimeType: "application/pdf",
+                  data: pdfBuffer.toString("base64"),
+                },
+              },
+              {
+                text: prompt,
+              },
+            ],
           },
         ],
-      },
-    ],
-    config: {
-      responseMimeType: "application/json",
-      responseSchema,
-      temperature: 0,
-    },
-  });
+        config: {
+          responseMimeType: "application/json",
+          responseSchema,
+          temperature: 0,
+        },
+      });
+      if (response && response.text) break;
+    } catch (err) {
+      lastError = err;
+      console.warn(`Gemini bill extraction attempt ${attempt} failed:`, err.message || err);
+      if (attempt < 3) {
+        await new Promise((res) => setTimeout(res, attempt * 1500));
+      }
+    }
+  }
+
+  if (!response || !response.text) {
+    throw lastError || new Error("Gemini returned an empty extraction response");
+  }
 
   const responseText = response.text;
-
-  if (!responseText) {
-    throw new Error("Gemini returned an empty extraction response");
-  }
 
   let extractedData;
 

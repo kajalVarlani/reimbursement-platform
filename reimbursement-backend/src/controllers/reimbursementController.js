@@ -327,6 +327,9 @@ async function createReimbursement(req, res) {
       );
 
       return r;
+    }, {
+      maxWait: 15000,
+      timeout: 35000,
     });
 
     res.status(201).json({
