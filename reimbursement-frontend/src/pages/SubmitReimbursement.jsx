@@ -344,6 +344,7 @@ const handleDrop = (index, e) => {
         invoiceNumber: bill.invoiceNumber,
         transactionId: bill.transactionId,
         billDate: bill.billDate,
+        aiSummary: bill.aiSummary || null,
       }));
       formData.append('bills', JSON.stringify(billsMetadata));
 
